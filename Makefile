@@ -1,0 +1,55 @@
+.DEFAULT_GOAL := help
+
+# Linters run through `go run` at pinned versions, so nothing needs
+# installing. Keep them in step with .github/workflows/ci.yml.
+STATICCHECK := honnef.co/go/tools/cmd/staticcheck@v0.8.2
+GOVULNCHECK := golang.org/x/vuln/cmd/govulncheck@v1.9.0
+
+.PHONY: help
+help: ## List available commands
+	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
+	  | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
+
+.PHONY: migrate
+migrate: ## Apply pending database migrations
+	go run ./cmd/migrate
+
+.PHONY: status
+status: ## Show what is in the pantry
+	go run ./cmd/despensa status
+
+.PHONY: build
+build: ## Build every binary into bin/
+	go build -trimpath -o bin/ ./cmd/...
+
+.PHONY: test
+test: ## Run tests with the race detector
+	go test -race ./...
+
+.PHONY: cover
+cover: ## Generate the coverage report
+	go test -coverprofile=coverage.out ./...
+	go tool cover -html=coverage.out -o coverage.html
+	@echo "report written to coverage.html"
+
+.PHONY: check
+check: fmt-check ## Run everything CI runs
+	go vet ./...
+	go run $(STATICCHECK) ./...
+	go test -race ./...
+	go run $(GOVULNCHECK) ./...
+
+.PHONY: fmt-check
+fmt-check: ## Fail if any file is not gofmt-clean
+	@out=$$(gofmt -l .); \
+	if [ -n "$$out" ]; then \
+	  echo "Files not gofmt-clean:"; echo "$$out"; exit 1; \
+	fi
+
+.PHONY: tidy
+tidy: ## Tidy go.mod and go.sum
+	go mod tidy
+
+.PHONY: clean
+clean: ## Remove build artifacts
+	rm -rf bin coverage.out coverage.html
