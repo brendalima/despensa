@@ -54,8 +54,7 @@ func (r *Pantry) InTx(ctx context.Context, fn func(PantryTx) error) error {
 	if err != nil {
 		return fmt.Errorf("couldn't begin transaction: %w", err)
 	}
-	// Rollback after a successful Commit is a no-op, so this covers
-	// every path out of fn, panic included.
+	// A no-op after a successful Commit, so it covers every path out.
 	defer func() { _ = tx.Rollback() }()
 
 	if err := fn(&pantryTx{tx: tx}); err != nil {
@@ -179,17 +178,16 @@ func (t *pantryTx) LockByID(ctx context.Context, id string) (domain.Item, error)
 	return items[0], nil
 }
 
-// LockByName matches the item's own name and its aliases, ignoring case.
-// Two matches is a refusal, not a coin toss: logging rice against the
-// arborio would be wrong in a way nobody would notice for weeks.
+// LockByName matches the name and the aliases, ignoring case. Two
+// matches is a refusal, not a coin toss.
 func (t *pantryTx) LockByName(ctx context.Context, name string) (domain.Item, error) {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
 		return domain.Item{}, domain.NewValidationError("name", "is empty")
 	}
 
-	// The alias subquery is a separate condition rather than a join, so
-	// an item with two matching aliases is still one row.
+	// A subquery rather than a join, so an item with two matching
+	// aliases is still one row.
 	items, err := readItems(ctx, t.tx,
 		`WHERE archived_at IS NULL
 		   AND (lower(name) = lower($1)
@@ -258,8 +256,7 @@ func (t *pantryTx) SetOnHand(ctx context.Context, itemID string, onHand domain.A
 	return nil
 }
 
-// UpsertPortion writes a portion, keeping a size the person gave over an
-// estimate from the model.
+// UpsertPortion keeps a size the person gave over the model's estimate.
 func (t *pantryTx) UpsertPortion(ctx context.Context, itemID string, p domain.Portion) error {
 	source := p.Source
 	if source == "" {
@@ -334,8 +331,8 @@ func (t *pantryTx) MarkEventUndone(ctx context.Context, id int64) error {
 	return nil
 }
 
-// readItems reads items by an arbitrary tail, then their portions and
-// aliases: three queries however many items there are.
+// readItems reads items, then their portions and aliases: three queries
+// however many items there are.
 func readItems(ctx context.Context, q querier, tail string, args ...any) ([]domain.Item, error) {
 	rows, err := q.QueryContext(ctx, `SELECT `+itemColumns+` FROM items `+tail, args...)
 	if err != nil {
@@ -445,8 +442,8 @@ func (t *nullTime) Scan(src any) error {
 	return nil
 }
 
-// archivedParam maps the domain's zero time to a sentinel the UPDATE
-// turns back into NULL, so "not archived" survives the round trip.
+// archivedParam maps the zero time to a sentinel the UPDATE turns back
+// into NULL, so "not archived" survives the round trip.
 func archivedParam(t time.Time) time.Time {
 	if t.IsZero() {
 		return time.Unix(0, 0).UTC()

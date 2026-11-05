@@ -83,14 +83,9 @@ func TestNoEnvironmentReadsInsideInternal(t *testing.T) {
 	})
 }
 
-// The language boundary of AGENTS.md §12. The core holds no sentence
-// meant for a person: a domain error carries a stable code, and
-// internal/humanize owns the wording. Without this test the rule lasts
-// until the first hurry.
-//
-// It looks for accented letters in string literals, walking the AST so
-// that a comment written in Portuguese — which is most of them — is not
-// mistaken for a message.
+// The language boundary of AGENTS.md §12. Without this test the rule
+// lasts until the first hurry. It walks the AST rather than the lines so
+// a Portuguese comment is not mistaken for a message.
 func TestNoPortugueseInsideTheCore(t *testing.T) {
 	forEachSource(t, "core", func(t *testing.T, path string, file *ast.File, fset *token.FileSet) {
 		ast.Inspect(file, func(n ast.Node) bool {
@@ -112,8 +107,7 @@ func TestNoPortugueseInsideTheCore(t *testing.T) {
 }
 
 // forEachSource parses every non-test .go file under root. Test files
-// hold the fixtures — "taça", "pão de forma" — and those are data, which
-// is exactly where Portuguese belongs.
+// hold the fixtures, and those are data.
 func forEachSource(t *testing.T, root string, check func(*testing.T, string, *ast.File, *token.FileSet)) {
 	t.Helper()
 	fset := token.NewFileSet()

@@ -272,7 +272,7 @@ Convenções:
   Documentação de código — `README.md`, `AGENTS.md` à parte — é inglês: é código, não conversa.
   Os exemplos dentro dela ficam em português, porque são dados ("taça", "fatia", o que o bot
   responde).
-- Comentários só quando explicam o *porquê*.
+- Comentários só quando explicam o *porquê*, mas tente evitar essays.
 - Use o pacote `log/slog` para logs estruturados, em vez de `fmt.Println`.
 
 ## 13. Testes

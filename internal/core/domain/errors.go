@@ -2,17 +2,12 @@ package domain
 
 import "strings"
 
-// Domain errors. The repository translates infrastructure errors into
-// these, and the border (internal/humanize) turns these into Portuguese,
-// so the core never holds a sentence meant for a person.
-//
-// This is the one place this project parts ways with venus-admin, where
-// ValidationError carries its own Portuguese Message. Here the only user
-// interface is a conversation, and a message built in the core would mean
-// the same refusal was worded in two layers. So each error carries a
-// stable Code instead, and the border owns the wording.
+// Domain errors carry a stable Code; internal/humanize owns the wording.
+// This is where the project parts ways with venus-admin, whose
+// ValidationError holds its own Portuguese message: here the only
+// interface is a conversation, so a message built in the core would mean
+// the same refusal worded in two layers.
 
-// Error codes, stable because the border switches on them.
 const (
 	CodeNotFound       = "not_found"
 	CodeAmbiguous      = "ambiguous_item"
@@ -30,8 +25,8 @@ func (e *NotFoundError) Code() string  { return CodeNotFound }
 func NewNotFoundError(msg string) *NotFoundError { return &NotFoundError{msg: msg} }
 
 // AmbiguousItemError reports that what the person said matches more than
-// one item. Candidates are the names, so the border can ask which one —
-// guessing would silently log a sale of rice against the arborio.
+// one item. Guessing would log rice against the arborio and nobody would
+// notice for weeks.
 type AmbiguousItemError struct {
 	Said       string
 	Candidates []string
@@ -46,14 +41,13 @@ func NewAmbiguousItemError(said string, candidates []string) *AmbiguousItemError
 	return &AmbiguousItemError{Said: said, Candidates: candidates}
 }
 
-// UnknownPortionError reports a word the item does not know and that came
+// UnknownPortionError reports a word the item does not know that came
 // with no estimate. The border asks the model to estimate rather than
 // asking the person to measure.
 type UnknownPortionError struct {
 	Item    string
 	Portion string
-	// Known is the item's vocabulary, so the answer can offer it.
-	Known []string
+	Known   []string
 }
 
 func (e *UnknownPortionError) Error() string {
@@ -65,9 +59,6 @@ func NewUnknownPortionError(item, portion string, known []string) *UnknownPortio
 	return &UnknownPortionError{Item: item, Portion: portion, Known: known}
 }
 
-// ValidationError carries the field that failed and a stable code. Error()
-// is in English, lowercase and without a full stop, like every other
-// error in the project.
 type ValidationError struct {
 	Field string
 	code  string
@@ -90,7 +81,6 @@ func NewCodedValidationError(field, code, msg string) *ValidationError {
 	return &ValidationError{Field: field, code: code, msg: msg}
 }
 
-// ConflictError reports a name already in use by another item.
 type ConflictError struct{ Name string }
 
 func (e *ConflictError) Error() string { return "item name already in use: " + e.Name }

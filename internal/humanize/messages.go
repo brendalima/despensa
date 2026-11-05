@@ -23,9 +23,8 @@ func Receipt(r domain.Receipt) string {
 	if r.ItemCreated {
 		b.WriteString("\nItem novo, anotado agora.")
 	}
-	// The first time a word is used, say what it was written down as, so
-	// a bad estimate can be corrected in one sentence instead of
-	// quietly skewing the totals for weeks.
+	// Say what a new word was written down as, so a bad estimate gets
+	// corrected in one sentence instead of skewing the totals.
 	if r.PortionLearned != nil {
 		b.WriteString("\nAnotei que 1 ")
 		b.WriteString(r.PortionLearned.Name)
@@ -33,8 +32,8 @@ func Receipt(r domain.Receipt) string {
 		b.WriteString(Quantity(unitOnly(r.Item), r.PortionLearned.One))
 		b.WriteString(". Se estiver muito fora, me diga o valor certo.")
 	}
-	// The low-stock alert rides along on the reply, which is why it needs
-	// no scheduled job and no approved message template.
+	// Riding along on the reply is why this needs no scheduled job and
+	// no approved message template.
 	if r.CrossedThreshold && !r.Drifted {
 		b.WriteString("\n⚠️ Chegou no mínimo: ")
 		b.WriteString(r.Item.Name)
@@ -48,8 +47,7 @@ func Receipt(r domain.Receipt) string {
 	return b.String()
 }
 
-// Receipts joins a batch into one message, because one sentence gets one
-// answer.
+// Receipts joins a batch: one sentence gets one answer.
 func Receipts(rs []domain.Receipt) string {
 	lines := make([]string, 0, len(rs))
 	for _, r := range rs {
@@ -105,9 +103,7 @@ func Item(item domain.Item) string {
 	}
 }
 
-// Error turns a domain error into something the person can act on. It
-// switches on the stable code, never on the message, so the wording can
-// change without changing behaviour.
+// Error turns a domain error into something the person can act on.
 func Error(err error) string {
 	var ambiguous *domain.AmbiguousItemError
 	if errors.As(err, &ambiguous) {
@@ -139,13 +135,12 @@ func Error(err error) string {
 		return "Não consegui entender essa parte (" + invalid.Field + ")."
 	}
 
-	// Anything else is a bug or an outage, and saying so plainly beats a
-	// cheerful lie about having saved it.
+	// A bug or an outage. Saying so beats a cheerful lie.
 	return "Deu problema para salvar agora. Não anotei nada — pode repetir em um minuto?"
 }
 
-// unitOnly is an item stripped of its portions, for rendering an amount
-// in the plain unit even when the item has a word for the piece.
+// unitOnly renders in the plain unit even when the item has a word for
+// the piece.
 func unitOnly(item domain.Item) domain.Item {
 	return domain.Item{Unit: item.Unit}
 }

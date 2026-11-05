@@ -36,11 +36,24 @@ import (
 	"github.com/brendalima/despensa/internal/repository"
 )
 
+// errReported marks an error already shown to the person.
+var errReported = errors.New("reported")
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "erro:", err)
+		if !errors.Is(err, errReported) {
+			fmt.Fprintln(os.Stderr, "erro:", err)
+		}
 		os.Exit(1)
 	}
+}
+
+// report prints what the person can act on, then the English detail for
+// whoever is debugging.
+func report(err error) error {
+	fmt.Fprintln(os.Stderr, humanize.Error(err))
+	fmt.Fprintf(os.Stderr, "(%v)\n", err)
+	return errReported
 }
 
 func run(args []string) error {
@@ -133,11 +146,14 @@ func add(ctx context.Context, svc services.PantryService, args []string) error {
 	threshold := fs.Float64("threshold", 0, "restock level, in the item's unit (default: a fifth of the largest portion)")
 	category := fs.String("category", "", "category, for grouping")
 	aliases := fs.String("aliases", "", "other names, comma separated")
-	if err := fs.Parse(args); err != nil {
+
+	// flag stops parsing at the first positional argument, so
+	// "add arroz g --portion taça=180" would drop every flag.
+	rest, flags := splitArgs(args)
+	if err := fs.Parse(flags); err != nil {
 		return err
 	}
 
-	rest := fs.Args()
 	if len(rest) < 2 {
 		return errors.New("usage: despensa add NOME UNIDADE --portion nome=qtd")
 	}
@@ -164,7 +180,7 @@ func add(ctx context.Context, svc services.PantryService, args []string) error {
 		Source:      domain.SourceCLI,
 	}})
 	if err != nil {
-		return fmt.Errorf("%s: %w", humanize.Error(err), err)
+		return report(err)
 	}
 	fmt.Println(humanize.Receipts(receipts))
 	return nil
@@ -199,7 +215,7 @@ func record(ctx context.Context, svc services.PantryService, kind domain.EventKi
 		Source:      domain.SourceCLI,
 	}})
 	if err != nil {
-		return fmt.Errorf("%s: %w", humanize.Error(err), err)
+		return report(err)
 	}
 	fmt.Println(humanize.Receipts(receipts))
 	return nil
@@ -215,7 +231,7 @@ func undo(ctx context.Context, svc services.PantryService, args []string) error 
 	}
 	receipt, err := svc.Undo(ctx, id)
 	if err != nil {
-		return fmt.Errorf("%s: %w", humanize.Error(err), err)
+		return report(err)
 	}
 	fmt.Println(humanize.Undone(receipt))
 	return nil
@@ -236,7 +252,7 @@ func note(ctx context.Context, svc services.PantryService, args []string) error 
 	}
 	n, err := svc.AddNote(ctx, strings.Join(args, " "))
 	if err != nil {
-		return fmt.Errorf("%s: %w", humanize.Error(err), err)
+		return report(err)
 	}
 	fmt.Printf("Anotado: %s (#%d)\n", n.Text, n.ID)
 	return nil
@@ -262,7 +278,7 @@ func history(ctx context.Context, svc services.PantryService, args []string) err
 		fmt.Printf("#%d %s %s %s %s%s\n",
 			e.ID, e.CreatedAt.Local().Format(time.DateTime), e.Kind,
 			humanize.Count(e.PortionQty, e.PortionName),
-			humanize.Quantity(item, e.Delta.AtLeastZero()), mark)
+			humanize.Quantity(item, magnitude(e.Delta)), mark)
 	}
 	return nil
 }
@@ -341,4 +357,32 @@ func splitList(v string) []string {
 		}
 	}
 	return out
+}
+
+// splitArgs separates positional arguments from flags, so flags may come
+// after the item's name. Every flag this CLI has takes a value, which is
+// what makes the one-token lookahead enough.
+func splitArgs(args []string) (positional, flags []string) {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if !strings.HasPrefix(arg, "-") {
+			positional = append(positional, arg)
+			continue
+		}
+		flags = append(flags, arg)
+		if !strings.Contains(arg, "=") && i+1 < len(args) {
+			i++
+			flags = append(flags, args[i])
+		}
+	}
+	return positional, flags
+}
+
+// magnitude is the size of a delta regardless of direction: the kind
+// already says which way it went.
+func magnitude(a domain.Amount) domain.Amount {
+	if a < 0 {
+		return -a
+	}
+	return a
 }

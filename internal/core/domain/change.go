@@ -1,9 +1,8 @@
 package domain
 
-// ItemChange is an edit to an item. Every field is a pointer or a slice
-// so that "not mentioned" and "set to empty" stay different things: the
-// model asked to change the threshold must not wipe the category it never
-// mentioned.
+// ItemChange is an edit to an item. Fields are pointers so that "not
+// mentioned" and "set to empty" stay different: changing the threshold
+// must not wipe the category.
 type ItemChange struct {
 	ItemID string
 
@@ -12,18 +11,17 @@ type ItemChange struct {
 	Threshold *Amount
 
 	// Portions are added or corrected, not replaced: a size given here
-	// is the person's own, so it outranks any earlier estimate.
+	// is the person's own, so it outranks any estimate.
 	Portions []Portion
 
 	// Aliases, when not nil, replaces the whole list.
 	Aliases []string
 
-	// Archive, when set, archives or brings the item back.
 	Archive *bool
 }
 
-// Empty reports that the change asks for nothing, which is a mistake
-// worth refusing rather than a no-op to hide.
+// Empty reports that the change asks for nothing: worth refusing rather
+// than hiding as a no-op.
 func (c ItemChange) Empty() bool {
 	return c.Name == nil && c.Category == nil && c.Threshold == nil &&
 		len(c.Portions) == 0 && c.Aliases == nil && c.Archive == nil

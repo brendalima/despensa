@@ -17,9 +17,8 @@ import (
 
 var _ PantryService = (*Pantry)(nil)
 
-// defaultThresholdShare is the fraction of a package that becomes the
-// restock threshold when nobody set one: a fifth of a package is late
-// enough not to nag and early enough to buy before it runs out.
+// defaultThresholdShare: a fifth of a package is late enough not to nag
+// and early enough to buy before it runs out.
 const defaultThresholdShare = 5
 
 // historyLimit caps how much ledger a caller can ask for at once.
@@ -67,14 +66,12 @@ func (s *Pantry) Record(ctx context.Context, in []domain.EventInput) ([]domain.R
 
 	receipts := make([]domain.Receipt, 0, len(in))
 	err := s.repo.InTx(ctx, func(tx repository.PantryTx) error {
-		// Reset on retry: InTx may be called again by a caller, and a
-		// half-filled slice would double the receipts.
+		// A retried InTx must not double the receipts.
 		receipts = receipts[:0]
 		for i, entry := range in {
 			receipt, err := s.record(ctx, tx, entry)
 			if err != nil {
-				// Which entry failed matters: the border says "I did
-				// not understand the second thing you said".
+				// Which entry failed is what the border reports back.
 				return fmt.Errorf("entry %d: %w", i+1, err)
 			}
 			receipts = append(receipts, receipt)
@@ -87,9 +84,9 @@ func (s *Pantry) Record(ctx context.Context, in []domain.EventInput) ([]domain.R
 	return receipts, nil
 }
 
-// record applies one entry. The order of the steps is the contract:
-// nothing is written until the item, the portion and the quantity are all
-// resolved, so a refused entry leaves no half-created item behind.
+// record applies one entry. The order is the contract: nothing is
+// written until the item, the portion and the quantity all resolve, so a
+// refused entry leaves no half-created item behind.
 func (s *Pantry) record(ctx context.Context, tx repository.PantryTx, in domain.EventInput) (domain.Receipt, error) {
 	if !in.Kind.Valid() {
 		return domain.Receipt{}, domain.NewValidationError("kind", "is not a known event kind")
@@ -97,7 +94,6 @@ func (s *Pantry) record(ctx context.Context, tx repository.PantryTx, in domain.E
 	if in.Source == "" {
 		return domain.Receipt{}, domain.NewValidationError("source", "is empty")
 	}
-	// Zero of something is a confused call for every kind but one:
 	// "usei nada de arroz" means nothing, while "acabou o arroz" is a
 	// correction to zero, and so is an item entering the pantry empty.
 	if in.PortionQty == 0 && !in.Kind.Absolute() {
@@ -117,12 +113,10 @@ func (s *Pantry) record(ctx context.Context, tx repository.PantryTx, in domain.E
 		return domain.Receipt{}, err
 	}
 
-	// A quantity in portions becomes an amount in the item's unit here,
-	// and only here. Everything downstream is integers in one unit.
+	// Portions become an amount in the item's unit here and only here.
 	magnitude := portion.One.Scale(in.PortionQty)
 	if magnitude < 0 {
-		// A negative count of portions is a confused call, not a
-		// subtraction: the kind already says which way it goes.
+		// The kind already says which way it goes.
 		return domain.Receipt{}, domain.NewValidationError("portion_qty", "is negative")
 	}
 
@@ -173,16 +167,16 @@ func (s *Pantry) record(ctx context.Context, tx repository.PantryTx, in domain.E
 		After:          after,
 		PortionLearned: learned,
 		ItemCreated:    created,
-		// Crossing is the moment it happens, not the state: an item
-		// already low does not raise the alert on every use.
+		// The moment, not the state: an item already low must not
+		// raise the alert on every use.
 		CrossedThreshold: item.BelowThreshold() && before > item.Threshold,
 		Drifted:          item.Drifted(),
 	}, nil
 }
 
-// resolveItem finds the item the entry is about, or builds the new one it
-// describes. The new item is returned unsaved: nothing is written until
-// the whole entry is known to be good.
+// resolveItem finds the item, or builds the new one the entry describes.
+// The new item comes back unsaved: nothing is written until the whole
+// entry is known to be good.
 func (s *Pantry) resolveItem(ctx context.Context, tx repository.PantryTx, in domain.EventInput) (domain.Item, bool, error) {
 	switch {
 	case in.ItemID != "" && in.NewItem != nil:
@@ -197,9 +191,8 @@ func (s *Pantry) resolveItem(ctx context.Context, tx repository.PantryTx, in dom
 		if err != nil {
 			return domain.Item{}, false, err
 		}
-		// The model may describe an item that already exists under a
-		// name it did not see. Taking the existing one is better than
-		// a duplicate "Arroz" next to "arroz".
+		// Beats a duplicate "Arroz" next to "arroz" when the model
+		// describes something it did not see in the list.
 		if existing, err := tx.LockByName(ctx, item.Name); err == nil {
 			return existing, false, nil
 		} else if !isNotFound(err) {
@@ -212,10 +205,9 @@ func (s *Pantry) resolveItem(ctx context.Context, tx repository.PantryTx, in dom
 	}
 }
 
-// resolvePortion finds what one portion is worth. A word the item already
-// knows always wins, so the same sentence always means the same amount;
-// an unknown word is learned from the model's estimate, and only refused
-// when there is no estimate to learn from.
+// resolvePortion finds what one portion is worth. A known word always
+// wins, so the same sentence always means the same amount; an unknown one
+// is learned from the model's estimate, and refused only without one.
 func (s *Pantry) resolvePortion(ctx context.Context, tx repository.PantryTx, item domain.Item, in domain.EventInput) (domain.Portion, *domain.Portion, error) {
 	name := strings.TrimSpace(in.PortionName)
 	if name == "" {
@@ -241,9 +233,8 @@ func (s *Pantry) resolvePortion(ctx context.Context, tx repository.PantryTx, ite
 	return learned, &learned, nil
 }
 
-// deltaFor turns a magnitude into a signed change. A correction is the
-// one kind that carries a level rather than a change: the person says
-// what is there, and the delta is whatever gets the total to it.
+// deltaFor turns a magnitude into a signed change. A correction carries
+// a level, so its delta is whatever gets the total there.
 func deltaFor(kind domain.EventKind, onHand, magnitude domain.Amount) (domain.Amount, error) {
 	switch kind {
 	case domain.EventRestock:
@@ -270,8 +261,7 @@ func (s *Pantry) Undo(ctx context.Context, eventID int64) (domain.Receipt, error
 			return err
 		}
 
-		// Already undone: report the state, change nothing. A second tap
-		// on the same button must not take the amount off twice.
+		// A second tap on the same button changes nothing.
 		if event.Undone() {
 			receipt = domain.Receipt{
 				Item:    item,
@@ -349,8 +339,8 @@ func (s *Pantry) Update(ctx context.Context, change domain.ItemChange) (domain.I
 			return err
 		}
 
-		// A portion given here is the person's own number, so it is
-		// written as corrected and no later estimate can move it.
+		// The person's own number: written as corrected, so no later
+		// estimate can move it.
 		for _, p := range change.Portions {
 			if strings.TrimSpace(p.Name) == "" {
 				return domain.NewValidationError("portion_name", "is empty")
@@ -369,8 +359,8 @@ func (s *Pantry) Update(ctx context.Context, change domain.ItemChange) (domain.I
 			}
 		}
 
-		// Read it back so the caller gets the item as stored, portions
-		// and aliases included, rather than the patched copy.
+		// Read it back so the caller gets what is stored, not the
+		// patched copy.
 		updated, err = tx.LockByID(ctx, item.ID)
 		return err
 	})
@@ -411,7 +401,7 @@ func (s *Pantry) RemoveNote(ctx context.Context, id int64) error {
 	return s.repo.RemoveNote(ctx, id)
 }
 
-// newItem validates what the model described and fills in the id and the
+// newItem validates what the model described and fills in the id and
 // threshold.
 func newItem(in domain.NewItem) (domain.Item, error) {
 	name := strings.TrimSpace(in.Name)
@@ -459,9 +449,9 @@ func newItem(in domain.NewItem) (domain.Item, error) {
 	return item, nil
 }
 
-// defaultThreshold picks a restock level from the vocabulary: a fifth of
-// the largest portion, which is the package in practice. With no portions
-// to go by it stays zero, which means "tell me when it runs out".
+// defaultThreshold is a fifth of the largest portion, which is the
+// package in practice. With no portions it stays zero: "tell me when it
+// runs out".
 func defaultThreshold(portions []domain.Portion) domain.Amount {
 	var largest domain.Amount
 	for _, p := range portions {
