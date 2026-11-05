@@ -122,13 +122,72 @@ weighs — go missing from the prompt.
 Logs go to **stderr**: stdout carries the JSON-RPC frames, and one stray line on
 it corrupts the session rather than showing up as a log.
 
+## The bot
+
+Phase C is the WhatsApp bot: `cmd/api` serves the webhook, `internal/bot` is the
+conversation, and the same six tools do the work. There is no HTTP between them
+and the pantry — one service, one household, so the tools call the services in
+process.
+
+```
+POST /webhooks/whatsapp ─► signature ─► allowed number ─► claim ─► model ─► tools
+GET  /webhooks/whatsapp     Meta's subscription handshake
+GET  /healthz               does not touch the database
+GET  /readyz                touches the database
+```
+
+The order of those steps is the security of the service, and each one of them is
+a test:
+
+1. **The signature first.** HMAC-SHA256 over the raw body, compared in constant
+   time. Without it this is a public write API for the household's pantry, so a
+   wrong signature is `403` and the payload is never parsed.
+2. **The allowed list.** A number outside `WHATSAPP_ALLOWED_NUMBERS` gets a
+   neutral line and **zero** model calls. Prompt injection adds no power here —
+   anyone who can send a message can already write to the pantry — which is
+   exactly why the list is not optional.
+3. **The idempotency claim.** `INSERT ... ON CONFLICT DO NOTHING` on
+   `processed_messages`. Meta redelivers, and a second run would log the same cup
+   of rice twice.
+4. **`200` before the work.** The reply goes out first and the message is handled
+   in the background, because Meta redelivers what takes too long. Shutdown waits
+   for what it already answered for.
+5. **The loop**, capped at `BOT_MAX_TOOL_ITERATIONS` (6). A runaway loop is a
+   bug, not an expense — but the bill is how anyone would find out, so the cap is
+   the fix. A tool that refuses comes back as a `tool_result` the model can read,
+   never as a protocol error.
+6. **The receipt**, with a `Desfazer` button per event written. The payload is
+   `undo:<event_id>`: the id **is** the state, so there is no table of pending
+   actions — nothing is pending, the write already happened.
+7. **A tap skips the model.** The button carries the event id, so there is
+   nothing to infer and nothing to pay for.
+
+Portions of a conversation are kept for half an hour in `conversation_turns`, so
+*"e mais uma taça"* still means rice. An assistant turn is stored as the model
+wrote it and replayed byte for byte: a turn rebuilt from its parts would be a
+turn edited, and an edited history invalidates the reasoning that came with it.
+
+The provider and the model are both behind ports — `Messenger` and `Webhook` in
+`internal/bot/whatsapp`, `Model` in `internal/bot/claude`. Telegram, if Meta's
+number turns out to be a problem, is a new package behind the same two ports and
+nothing else changes.
+
+```bash
+make api     # needs the WHATSAPP_* variables and ANTHROPIC_API_KEY
+```
+
+The Anthropic key belongs in `fly secrets`, **never** in the local shell
+profile: an exported key makes Claude Code stop using the subscription and bill
+the key instead. Deployment is `fly.toml` plus the `Dockerfile`; the migration is
+the release command, never the startup.
+
 ## State
 
 | Phase | Delivers | State |
 |---|---|---|
 | A | Domain, ledger, repository, services, CLI | done, verified against Postgres on Neon |
 | B | Tools + MCP server (stdio) | done, tested; not yet tried against a real model |
-| C | WhatsApp bot | to do |
+| C | WhatsApp bot | built and tested; not yet run against a real number |
 | D | Weekly digest | to do |
 
 Picking this up: read [`docs/HANDOFF.md`](docs/HANDOFF.md) first, then

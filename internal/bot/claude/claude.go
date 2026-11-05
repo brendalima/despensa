@@ -44,6 +44,10 @@ type Input struct {
 	// question: what matters is the quality of portion estimates, and
 	// the only way to know is to run on real sentences.
 	Model string
+
+	// BaseURL overrides the API's host, which is what a test points at
+	// so the mapping can be checked without spending anything.
+	BaseURL string
 }
 
 func New(in Input) (*Client, error) {
@@ -53,8 +57,13 @@ func New(in Input) (*Client, error) {
 	if in.Model == "" {
 		return nil, errors.New("missing anthropic model")
 	}
+	options := []option.RequestOption{option.WithAPIKey(in.APIKey)}
+	if in.BaseURL != "" {
+		options = append(options, option.WithBaseURL(in.BaseURL))
+	}
+
 	return &Client{
-		api:   anthropic.NewClient(option.WithAPIKey(in.APIKey)),
+		api:   anthropic.NewClient(options...),
 		model: in.Model,
 	}, nil
 }

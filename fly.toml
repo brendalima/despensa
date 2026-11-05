@@ -1,0 +1,38 @@
+# Fly.io. One machine is enough: one household, one pantry.
+app = 'despensa'
+primary_region = 'gru'
+
+[build]
+
+[deploy]
+  # The migration runs once, before the new machines take traffic, and
+  # never at startup: an API that migrates on boot migrates once per
+  # machine and hides a broken schema behind a retry.
+  release_command = '/app/migrate'
+
+[env]
+  APP_ENV = 'prod'
+  PORT = '8080'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+
+  # Scale to zero. The webhook POST is what wakes the machine, and Meta
+  # redelivers what a cold start was too slow for, so nothing is lost —
+  # the idempotency claim is what makes that safe.
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    # /healthz, not /readyz: a sleeping database must not restart a
+    # healthy machine. Readiness is a question a person asks.
+    path = '/healthz'
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '10s'
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '512mb'
