@@ -13,7 +13,6 @@ const (
 	CodeAmbiguous      = "ambiguous_item"
 	CodeUnknownPortion = "unknown_portion"
 	CodeInvalid        = "invalid"
-	CodeAlreadyUndone  = "already_undone"
 	CodeDuplicateName  = "duplicate_name"
 )
 
@@ -61,24 +60,14 @@ func NewUnknownPortionError(item, portion string, known []string) *UnknownPortio
 
 type ValidationError struct {
 	Field string
-	code  string
 	msg   string
 }
 
 func (e *ValidationError) Error() string { return "invalid " + e.Field + ": " + e.msg }
-func (e *ValidationError) Code() string {
-	if e.code == "" {
-		return CodeInvalid
-	}
-	return e.code
-}
+func (e *ValidationError) Code() string  { return CodeInvalid }
 
 func NewValidationError(field, msg string) *ValidationError {
 	return &ValidationError{Field: field, msg: msg}
-}
-
-func NewCodedValidationError(field, code, msg string) *ValidationError {
-	return &ValidationError{Field: field, code: code, msg: msg}
 }
 
 type ConflictError struct{ Name string }
