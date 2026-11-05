@@ -1,97 +1,102 @@
 # despensa
 
-O inventário da despensa de casa, gerenciado por conversa.
+The home pantry inventory, managed by conversation.
 
-O problema não é falta de app de estoque doméstico — é que todos eles pedem que
-você pare, abra o app, ache o item e digite um número **no momento em que está
-cozinhando**. Ninguém faz isso, então o estoque vira ficção em três dias.
+The problem is not a shortage of pantry apps — it is that every one of them asks
+you to stop, open the app, find the item and type a number **while you are
+cooking**. Nobody does that, so the inventory becomes fiction within three days.
 
-Aqui a interface é uma frase: *"usei duas fatias de pão e uma taça de arroz"*.
-A resposta é um recibo com um botão **Desfazer**:
+Here the interface is a sentence: *"usei duas fatias de pão e uma taça de
+arroz"*. The answer is a receipt with an undo button:
 
 ```
 pão de forma: 18 → 16 fatias
 arroz: 5 kg → 4,8 kg (≈27 taças)
 ```
 
-**Estimativa aproximada é o objetivo, não uma concessão.** Ninguém vai pesar uma
-taça de arroz. O modelo estima na primeira vez que a palavra aparece, a
-estimativa fica salva, e a partir daí a mesma palavra vale sempre o mesmo —
-consistência importa mais que exatidão, porque é ela que faz a soma de trinta
-usos valer algo.
+**A rough estimate is the goal, not a concession.** Nobody is going to weigh a
+cup of rice. The model estimates the first time a word is used, the estimate is
+written down, and from then on the same word is always worth the same —
+consistency matters more than accuracy, because it is what makes thirty logged
+uses add up to something.
 
-## Como funciona
+## How it works
 
-Três ideias, e tudo decorre delas.
+Three ideas; everything else follows from them.
 
-**1. Unidade canônica + porções nomeadas.** Cada item é contado em `g`, `ml` ou
-`un`, e tem um vocabulário próprio: arroz conhece `taça` (180 g), `colher`
-(12 g) e `pacote` (5 kg); pão conhece `fatia` (1 un) e `pacote` (22 un).
-Comprar e usar são o mesmo mecanismo — "pacote" é só mais uma porção.
+**1. A canonical unit plus named portions.** Each item is counted in `g`, `ml`
+or `un`, and carries its own vocabulary: rice knows `taça` (180 g), `colher`
+(12 g) and `pacote` (5 kg); bread knows `fatia` (1 un) and `pacote` (22 un).
+Buying and using are the same mechanism — a package is just another portion.
 
-**2. O ledger é o estoque.** `items.on_hand_milli` é a soma dos deltas dos
-eventos que não foram desfeitos. Nada mais é a verdade, e é isso que dá
-Desfazer, histórico e previsão de graça. Toda quantidade é um `BIGINT` em
-milésimos da unidade canônica: inteiros, porque esses números são somados e
-subtraídos por anos, e a deriva de um float seria invisível.
+**2. The ledger is the inventory.** `items.on_hand_milli` is the sum of the
+deltas of the events that have not been undone. Nothing else is the truth, and
+that is what gives undo, history and a future forecast for free. Every quantity
+is a `BIGINT` in thousandths of the item's canonical unit: integers, because
+these numbers are added to and subtracted from for years, and a float's drift
+would be invisible.
 
-**3. Deriva negativa é sinal, não erro.** Se a conta fica negativa, ela contou
-menos do que entrou. O valor negativo é guardado, exibido como zero, e o bot
-pergunta quanto tem — é o único momento em que ele pede um número, e pede um
-palpite, não uma medição.
+**3. Negative drift is a signal, not an error.** If the running total goes
+below zero, it counted less than went in. The negative value is kept, shown as
+zero, and the bot asks how much is there — the only moment it asks for a number,
+and it asks for a guess, not a measurement.
 
-## Camadas
+**Nothing is confirmed before being written.** The blast radius is one row of a
+personal pantry, and the failure mode that kills this product is friction, so
+receipts carry the event id to undo instead of a confirmation prompt.
 
-Hexagonal, nos padrões do [`AGENTS.md`](AGENTS.md):
+## Layers
+
+Hexagonal, following [`AGENTS.md`](AGENTS.md):
 
 ```
 cmd ──► agent / bot ──► services ──► repository (interfaces)
                             │
-                            └──► domain ◄── (todas as camadas)
+                            └──► domain ◄── (every layer)
                                    ▲
-                          humanize ─┘  (o texto em pt-BR)
+                          humanize ─┘  (the Portuguese the person reads)
 ```
 
-**Fronteira de idioma:** código em inglês, conversa e dados em pt-BR. O domínio
-não tem nenhuma frase destinada a uma pessoa — o erro nasce em inglês com um
-código estável, e `internal/humanize` escreve o português. O arch test cobra
-isso.
+**Language boundary:** code in English, conversation and data in Portuguese. The
+domain holds no sentence meant for a person — an error is raised in English with
+a stable code, and `internal/humanize` writes the Portuguese. The architecture
+test enforces it: an accented string literal under `internal/core/` fails the
+build.
 
-## Rodando
+## Running it
 
-Precisa de Go 1.27+ e um Postgres (Neon serve, e é o alvo).
+Needs Go 1.27+ and a Postgres (Neon is the target).
 
 ```bash
-cp .env-sample .env     # preencha DATABASE_URL
+cp .env-sample .env     # fill in DATABASE_URL
 make migrate
-make check              # fmt, vet, staticcheck, testes com -race, govulncheck
+make check              # fmt, vet, staticcheck, tests with -race, govulncheck
 ```
 
-A CLI é a Fase A inteira, sem modelo e sem WhatsApp no caminho — se a
-aritmética ou o ledger estiverem errados, estão errados aqui, onde não há nada
-mais para culpar:
+The CLI is the whole of Phase A, with no model and no WhatsApp in the way — if
+the arithmetic or the ledger are wrong, they are wrong here, where there is
+nothing else to blame:
 
 ```bash
 go run ./cmd/despensa add arroz g --portion taça=180 --portion pacote=5000
-go run ./cmd/despensa buy arroz pacote      # comprei um pacote
-go run ./cmd/despensa use arroz taça 2      # usei duas taças
+go run ./cmd/despensa buy arroz pacote      # bought a package
+go run ./cmd/despensa use arroz taça 2      # used two cups
 go run ./cmd/despensa status
 go run ./cmd/despensa undo 3
 go run ./cmd/despensa shopping
 ```
 
-Os testes do repositório falam com um Postgres de verdade e **pulam** sem
-`TEST_DATABASE_URL`. Aponte para um branch descartável: eles escrevem e apagam
-linhas.
+The repository tests talk to a real Postgres and **skip** without
+`TEST_DATABASE_URL`. Point it at a throwaway branch: they write and delete rows.
 
-## Estado
+## State
 
-| Fase | O que entrega | Estado |
+| Phase | Delivers | State |
 |---|---|---|
-| A | Domínio, ledger, repositório, services, CLI | feito, exceto rodar as migrações num banco de verdade |
-| B | Ferramentas + servidor MCP (stdio) | a fazer |
-| C | Bot de WhatsApp | a fazer |
-| D | Digest semanal | a fazer |
+| A | Domain, ledger, repository, services, CLI | done, except running the migrations against a real database |
+| B | Tools + MCP server (stdio) | to do |
+| C | WhatsApp bot | to do |
+| D | Weekly digest | to do |
 
-O plano completo, com as decisões e o porquê de cada corte, está em
+The full plan, with every decision and the reasoning behind each cut, is in
 `~/.claude/plans/sequential-giggling-goose.md`.

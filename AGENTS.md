@@ -269,6 +269,9 @@ Convenções:
   `portions.name` ("taça", "fatia", "concha"), que guardam a palavra do usuário, não um termo
   técnico. Nenhum literal com acento em `internal/core/`: o erro de domínio nasce em inglês com um
   código estável e é traduzido na borda (`internal/humanize`). O arch test cobra isso.
+  Documentação de código — `README.md`, `AGENTS.md` à parte — é inglês: é código, não conversa.
+  Os exemplos dentro dela ficam em português, porque são dados ("taça", "fatia", o que o bot
+  responde).
 - Comentários só quando explicam o *porquê*.
 - Use o pacote `log/slog` para logs estruturados, em vez de `fmt.Println`.
 
