@@ -77,6 +77,7 @@ pão de forma   unit=un  on_hand=16_000      fatia=1_000  · pacote=22_000
 
 ## 6. What you cannot do from this machine
 
+- **Commit to `main`.** It takes no direct commits: one branch per phase, integrated by pull request (AGENTS.md §15). Branch off `main` before the first edit.
 - **Push.** `origin` is `git@github.com:brendalima/despensa.git`, and `~/.ssh/id_ed25519` has a passphrase with no agent running. Shell state does not survive between tool calls, so `ssh-agent` loaded in one command is gone by the next. Commit locally, one branch per phase, and let the human push. (The local `origin/main` ref matches `HEAD`, so a push happened from their side; this was not re-verified from here.)
 - **Reach GitHub at all** — no `gh` CLI installed, and `git ls-remote` fails on the same key.
 - **Change the Neon project** — the Neon MCP server is installed but unauthorized (`/mcp`). Credentials live in `.env.local`, which is gitignored and must stay that way.
