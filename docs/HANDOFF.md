@@ -48,7 +48,8 @@ A home pantry inventory whose interface is a sentence in WhatsApp: *"usei duas f
 - **Phase B's model pass.** Everything is tested, but no model has ever called these tools. The adversarial sentences are in §7; they are free to run, and they are the only evidence that the descriptions work.
 - **Phase C against reality.** No number, no Meta app, no Fly app, no secrets set, so no real message has ever arrived. §7 has the pass to run once the number exists, including the two negatives — a stranger's message and a repeated `message_id` — that are the point of the guards.
 - **Phase D** — `cmd/digest` and the Meta template. `Messenger.SendTemplate` and `WHATSAPP_DIGEST_TEMPLATE` are already there, unused.
-- **No CI.** `make check` is the gate, run by hand.
+- **No CI.** `make check` is the gate, run by hand. It was last run green on this branch: gofmt, vet, staticcheck, `go test -race` (integration tests included, against Neon `test`) and govulncheck with no findings.
+- **The image has never been built.** There is no docker on this machine, so the `Dockerfile` is unverified and `fly deploy` would be its first build; `fly.toml` does pass `flyctl config validate`. No Fly app exists yet either.
 - **Nothing prunes `conversation_turns`.** `services.Chat.Forget` exists and nobody calls it: the window is applied on read, so the rows are harmless but they accumulate. The obvious home is `cmd/digest`, which already runs weekly.
 
 ## 3. Non-negotiables
