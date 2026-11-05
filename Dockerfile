@@ -28,7 +28,9 @@ WORKDIR /app
 ENV APP_ENV=prod PORT=8080
 EXPOSE 8080
 
-# The API, never the migration: the schema is applied by cmd/migrate as
-# a release step, so a deploy that would break the schema fails before
-# the new machines take traffic.
-ENTRYPOINT ["/app/api"]
+# CMD, not ENTRYPOINT. Fly passes a release_command as the container's
+# command, and an ENTRYPOINT would still be prepended to it: the
+# migration machine would run `/app/api /app/migrate`, which ignores the
+# argument, serves HTTP and never exits, and the deploy hangs forever
+# waiting for it to stop. With CMD the release command replaces it.
+CMD ["/app/api"]
