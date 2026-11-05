@@ -59,37 +59,37 @@ func New(pantry Pantry, source string) (*ToolSet, error) {
 	set := &ToolSet{
 		tools: []Tool{
 			{
-				Name:        toolListInventory,
+				Name:        ToolListInventory,
 				Description: descListInventory,
 				Schema:      noArgs(),
 				Handler:     t.listInventory,
 			},
 			{
-				Name:        toolRecordEvents,
+				Name:        ToolRecordEvents,
 				Description: descRecordEvents,
 				Schema:      recordEventsSchema(),
 				Handler:     t.recordEvents,
 			},
 			{
-				Name:        toolUndoEvent,
+				Name:        ToolUndoEvent,
 				Description: descUndoEvent,
 				Schema:      undoEventSchema(),
 				Handler:     t.undoEvent,
 			},
 			{
-				Name:        toolUpdateItem,
+				Name:        ToolUpdateItem,
 				Description: descUpdateItem,
 				Schema:      updateItemSchema(),
 				Handler:     t.updateItem,
 			},
 			{
-				Name:        toolShoppingList,
+				Name:        ToolShoppingList,
 				Description: descShoppingList,
 				Schema:      noArgs(),
 				Handler:     t.shoppingList,
 			},
 			{
-				Name:        toolAddShoppingNote,
+				Name:        ToolAddShoppingNote,
 				Description: descAddShoppingNote,
 				Schema:      addShoppingNoteSchema(),
 				Handler:     t.addShoppingNote,

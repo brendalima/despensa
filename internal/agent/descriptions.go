@@ -11,13 +11,15 @@ package agent
 // ask what a portion weighs — are the product. Deleting them by accident
 // would leave a bot that works and is useless.
 
+// The tool names are exported: a driver names a tool when it calls one
+// without the model in the way, which is what the Desfazer button does.
 const (
-	toolListInventory   = "list_inventory"
-	toolRecordEvents    = "record_events"
-	toolUndoEvent       = "undo_event"
-	toolUpdateItem      = "update_item"
-	toolShoppingList    = "shopping_list"
-	toolAddShoppingNote = "add_shopping_note"
+	ToolListInventory   = "list_inventory"
+	ToolRecordEvents    = "record_events"
+	ToolUndoEvent       = "undo_event"
+	ToolUpdateItem      = "update_item"
+	ToolShoppingList    = "shopping_list"
+	ToolAddShoppingNote = "add_shopping_note"
 )
 
 const descListInventory = `Mostra a despensa inteira: id, nome, apelidos, unidade, quanto tem, o mínimo e as porções que já conheço, com o tamanho de cada uma.

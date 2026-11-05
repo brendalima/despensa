@@ -35,3 +35,18 @@ type PantryService interface {
 	AddNote(ctx context.Context, text string) (domain.Note, error)
 	RemoveNote(ctx context.Context, id int64) error
 }
+
+// ChatService is what the bot needs around one incoming message: the
+// guard against a redelivery, and the short history that lets "e mais
+// uma taça" still mean rice a minute later.
+type ChatService interface {
+	// Claim reports whether this delivery is the one to process. It is
+	// called before the model and before any write.
+	Claim(ctx context.Context, provider, messageID string) (bool, error)
+
+	History(ctx context.Context, chatID string) ([]domain.Turn, error)
+	Remember(ctx context.Context, chatID string, role domain.TurnRole, content []byte) error
+
+	// Forget drops the turns that fell out of the window.
+	Forget(ctx context.Context) (int64, error)
+}

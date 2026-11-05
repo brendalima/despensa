@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"github.com/brendalima/despensa/internal/core/domain"
 )
@@ -67,4 +68,16 @@ type MessageRepository interface {
 	// Claim reports whether this caller got the message. A redelivery
 	// gets false, and costs neither a model call nor a write.
 	Claim(ctx context.Context, provider, messageID string) (bool, error)
+}
+
+// ConversationRepository keeps the short history that lets "e mais uma
+// taça" still mean rice a minute later.
+type ConversationRepository interface {
+	// Recent returns one chat's turns since a moment, oldest first,
+	// capped at limit newest turns.
+	Recent(ctx context.Context, chatID string, since time.Time, limit int) ([]domain.Turn, error)
+	Append(ctx context.Context, t domain.Turn) (domain.Turn, error)
+
+	// Forget drops everything older than a moment.
+	Forget(ctx context.Context, before time.Time) (int64, error)
 }
