@@ -98,5 +98,6 @@ The repository tests talk to a real Postgres and **skip** without
 | C | WhatsApp bot | to do |
 | D | Weekly digest | to do |
 
-The full plan, with every decision and the reasoning behind each cut, is in
-`~/.claude/plans/sequential-giggling-goose.md`.
+Picking this up: read [`docs/HANDOFF.md`](docs/HANDOFF.md) first, then
+[`docs/plans/despensa.md`](docs/plans/despensa.md) for the phase-by-phase
+plan and the reasoning behind each cut.
