@@ -89,12 +89,45 @@ go run ./cmd/despensa shopping
 The repository tests talk to a real Postgres and **skip** without
 `TEST_DATABASE_URL`. Point it at a throwaway branch: they write and delete rows.
 
+## The tools, and trying them with a real model
+
+Phase B is the six tools (`internal/agent`) and an MCP server over stdio
+(`cmd/mcp`). It comes before WhatsApp because it is free to try: the host is
+your own Claude Desktop or Claude Code, so the model calls are on your
+subscription and this binary holds no API key.
+
+```bash
+claude mcp add despensa -- env DATABASE_URL="$DATABASE_URL" go run ./cmd/mcp
+```
+
+Then talk to it. What is worth checking is the behaviour that is easy to get
+backwards:
+
+| Say | What should happen |
+|---|---|
+| *"usei duas fatias de pão e uma taça de arroz"* | one `record_events` call with two entries, one receipt |
+| *"comprei um pacote de lentilha"* (no lentilha yet) | the item, its unit and its portions are created, **with nothing asked** |
+| *"usei uma concha de arroz"* (a new word) | the size is estimated, written down, and the second `concha` is worth the same |
+| *"usei um pouco de arroz"* | it asks, instead of inventing a number |
+| two items matching one word | it asks which, instead of guessing |
+
+The tools know nothing about MCP, and that is the point: `cmd/mcp` and the
+WhatsApp bot hand the same six tools, with the same wording, to two different
+SDKs. The day they disagree about what a `taça` is worth is the day the
+inventory is wrong, so the architecture test fails the build if `internal/agent`
+imports an SDK, and a golden test fails if the two sentences that invert what a
+model would otherwise do — record without confirming, never ask what a portion
+weighs — go missing from the prompt.
+
+Logs go to **stderr**: stdout carries the JSON-RPC frames, and one stray line on
+it corrupts the session rather than showing up as a log.
+
 ## State
 
 | Phase | Delivers | State |
 |---|---|---|
 | A | Domain, ledger, repository, services, CLI | done, verified against Postgres on Neon |
-| B | Tools + MCP server (stdio) | to do |
+| B | Tools + MCP server (stdio) | done, tested; not yet tried against a real model |
 | C | WhatsApp bot | to do |
 | D | Weekly digest | to do |
 

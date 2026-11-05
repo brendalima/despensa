@@ -32,6 +32,16 @@ var forbidden = map[string][]string{
 		modulePath + "/internal/core/services", modulePath + "/internal/humanize",
 		"net/http",
 	},
+	// The tools are plain Go values. An import of the MCP SDK or of a
+	// model's SDK from here would tie the six tools to one driver, and
+	// the day the bot and Claude Desktop disagree about what "taça" is
+	// worth is the day the inventory is wrong.
+	"internal/agent": {
+		modulePath + "/adapters", modulePath + "/internal/repository",
+		"net/http", "database/sql",
+		"github.com/jackc/pgx", "github.com/modelcontextprotocol/go-sdk",
+		"github.com/anthropics/anthropic-sdk-go",
+	},
 	// humanize is presentation and nothing else: it turns domain values
 	// into Portuguese. An import of the service from here would make the
 	// wording a layer that can also write to the database.
@@ -100,6 +110,42 @@ func TestNoPortugueseInsideTheCore(t *testing.T) {
 			if accented(value) {
 				t.Errorf("%s: accented string literal %q — user-facing text belongs in internal/humanize",
 					fset.Position(lit.Pos()), value)
+			}
+			return true
+		})
+	})
+}
+
+// The other half of the language boundary: the Portuguese a model or a
+// person reads is wording, and wording lives in one file per package.
+// The tool descriptions are prompt — the two sentences that invert what
+// a model would otherwise do are the product — so they belong with the
+// rest of the wording and not scattered through the handlers.
+func TestPortugueseLivesInOneFilePerPackage(t *testing.T) {
+	wording := map[string]string{
+		"agent":    "descriptions.go",
+		"humanize": "", // the whole package is wording
+	}
+
+	forEachSource(t, "..", func(t *testing.T, path string, file *ast.File, fset *token.FileSet) {
+		dir := filepath.Base(filepath.Dir(path))
+		allowed, watched := wording[dir]
+		if !watched || allowed == "" || filepath.Base(path) == allowed {
+			return
+		}
+
+		ast.Inspect(file, func(n ast.Node) bool {
+			lit, ok := n.(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				return true
+			}
+			value, err := strconv.Unquote(lit.Value)
+			if err != nil {
+				return true
+			}
+			if accented(value) {
+				t.Errorf("%s: accented string literal %q — the wording of %s belongs in %s",
+					fset.Position(lit.Pos()), value, dir, allowed)
 			}
 			return true
 		})

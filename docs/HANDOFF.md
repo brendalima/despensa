@@ -1,12 +1,13 @@
 # Handoff — despensa
 
-For whoever picks up phase B. Everything below was verified against the repo and the database, not recalled. Where something was not verified, it says so.
+For whoever picks up phase C. Everything below was verified against the repo and the database, not recalled. Where something was not verified, it says so.
 
-Last verified: 2026-11-05 · `main` at `127ff1d` · phase A done.
+Last verified: 2026-11-05 · branch `agent-tools` at `1fc5739` · phases A and B done.
 
 > **Read first**
 > - **Phase A is done and verified end to end**, against real Postgres 18 on Neon. The CLI (`cmd/despensa`) is the whole of it, and it works: create, buy, use, undo, drift, correct, shopping list.
-> - **Phases B, C and D are not started.** The plan is `docs/plans/despensa.md` (Portuguese), phase by phase, with the reasoning behind each cut. Read its "O que vem do plano da Venus, e o que eu corto de propósito" before adding anything the plan deliberately removed.
+> - **Phase B is done and verified against the protocol and the database, but not yet against a real model.** The six tools are in `internal/agent`, the stdio server in `cmd/mcp`. The one thing left is §7's Claude Desktop pass, which is the only way to find out whether the descriptions actually steer a model.
+> - **Phases C and D are not started.** The plan is `docs/plans/despensa.md` (Portuguese), phase by phase, with the reasoning behind each cut. Read its "O que vem do plano da Venus, e o que eu corto de propósito" before adding anything the plan deliberately removed.
 > - **Go is not on PATH.** It is at `~/.local/go` (1.27.3, installed by hand because the machine had none). Every command below assumes `export PATH=$HOME/.local/go/bin:$PATH`.
 > - **You cannot push from this machine.** See §6.
 
@@ -26,15 +27,18 @@ A home pantry inventory whose interface is a sentence in WhatsApp: *"usei duas f
 - **The SQL**, 11 integration tests against Neon: the ledger invariant after 40 random writes and undos, the `ON CONFLICT` rule that protects a corrected portion, `FOR UPDATE` with ambiguity by alias, the partial unique index that frees a name on archiving, rollback, and `Claim` idempotency.
 - **The migration applies on a fresh schema** — proved by applying `00001`'s Up section in a throwaway schema inside a rolled-back transaction, after its comments were edited.
 - **The CLI end to end** against Neon `dev`, with output matching the plan's target: `arroz: 5 kg → 4,6 kg (≈26 taças)`, `pão de forma: 22 → 20 fatias`.
-- **The test suites bite.** Four deliberate mutations were planted and each failed the right test: threshold crossing as a state, an estimate overwriting a known portion, a Portuguese literal in the core, and an `os.Getenv` inside `internal/`.
+- **The six tools and the MCP server.** 2 commits on `agent-tools`, `make check` green. `internal/agent` holds the tools as plain Go values and knows nothing about MCP or about a model SDK; `cmd/mcp` moves JSON across and nothing else.
+- **The tools, with mocked ports:** exactly six of them, every schema closed (`additionalProperties: false`), the `kind` and `unit` enums taken from the domain, a golden test over the descriptions, twelve shapes of rubbish refused before the handler and before any transaction, half portions, an item created on the way, a learned portion reported back, and `drift`/`crossed_threshold` passed through by those names.
+- **The protocol, over `mcp.NewInMemoryTransports()`** against the real `newServer`: six tools listed with their descriptions and `additionalProperties: false` intact, a round trip through `record_events`, and a refusal arriving as a tool result with `is_error` rather than as a protocol error.
+- **The built binary against Neon `dev`,** driven through `mcp.CommandTransport` the way a host drives it: `list_inventory` and `shopping_list` returned the real pantry, `record_events` took rice from 540 g to 320 g while learning `concha` = 220 g, the first `undo_event` put it back, and the second said *"Esse já estava desfeito"*.
+- **The test suites bite.** Four deliberate mutations were planted in phase A and each failed the right test: threshold crossing as a state, an estimate overwriting a known portion, a Portuguese literal in the core, and an `os.Getenv` inside `internal/`. Six more were planted in phase B: a Portuguese literal outside `descriptions.go`, `internal/agent` importing the MCP SDK, a schema that stopped being closed, the no-confirmation sentence deleted from the prompt, the event source hardcoded, and a tool failure raised as a protocol error.
 
 ### Not done
 
-- **Phase B** — `internal/agent` (six tools as Go structs) and `cmd/mcp` (stdio). Nothing exists yet.
+- **Phase B's model pass.** Everything is tested, but no model has ever called these tools. The adversarial sentences are in §7; they are free to run, and they are the only evidence that the descriptions work.
 - **Phase C** — `internal/bot`, `internal/bot/whatsapp`, `cmd/api`. Nothing exists; no WhatsApp number has been obtained, which is the one external blocker.
 - **Phase D** — `cmd/digest` and the Meta template.
 - **`conversation_turns` is created and unused** (0 references in Go). It is phase C's short history, migrated early on purpose.
-- **`domain.CodeAlreadyUndone` and `domain.NewCodedValidationError` are declared and unused.** Either wire them up in phase B or delete them; do not leave them as decoration.
 - **No Dockerfile, no fly.toml, no CI.** They belong with phase C, which is the first phase with something to host.
 
 ## 3. Non-negotiables
@@ -74,6 +78,11 @@ pão de forma   unit=un  on_hand=16_000      fatia=1_000  · pacote=22_000
 - **`DATABASE_URL_UNPOOLED` currently points at the `-pooler` host**, same as `DATABASE_URL`. `adapters/config.go` prefers the direct connection on purpose — pgx keeps a prepared-statement cache per connection and transaction pooling breaks it. It worked in every test here, so this is a latent problem, not an active one. Fix by copying the non-pooled string from the Neon console.
 - **`Scan` into `domain.Amount` / `Qty` / `Unit` works through reflection on the underlying type.** Changing one of those to a struct breaks every repository read at runtime, not at compile time.
 - **The CLI never estimates a portion** — it refuses an unknown word. Only the model estimates. Do not add a fallback estimate to `cmd/despensa`; it would make the CLI and the bot disagree about what a word is worth.
+- **The tool schemas are maps, not inferred from structs, and that is deliberate.** `jsonschema-go` reads only descriptions from struct tags, so an enum cannot come from `domain.AllUnits()` that way, and the generic `mcp.AddTool` would own the validation that the WhatsApp bot also needs. The map is both what the model is shown and what validates the call; `internal/agent/schema.go` is where `additionalProperties: false` lives, in one place. Changing a schema to a Go struct quietly reopens every object.
+- **`internal/agent` validates its own arguments, on purpose.** Phase C has no SDK in front of it doing that, and two validators would mean two sets of rules. Call tools through `ToolSet.Call`, never `Tool.Handler` directly, or nothing is checked.
+- **A word is learned even if the event is undone.** The portion is written before the event, and `undo_event` reverses the quantity, not the vocabulary. That is the right way round — consistency of the word is the point — but it means the smoke run left `concha` = 220 g on rice in Neon `dev`.
+- **`humanize.Secondary` picks the largest portion that lands between 2 and 40.** Adding a word therefore changes how an existing item reads: once rice knew `concha`, `540 g (≈3 taças)` became `540 g (≈2,5 conchas)`. Not a bug, but it will look like one in a diff of expected output.
+- **Logs in `cmd/mcp` must go to stderr.** `main` sets a stderr `slog` handler before anything else; stdout carries the JSON-RPC frames, and one stray line corrupts the session instead of showing up as a log.
 
 ## 6. What you cannot do from this machine
 
@@ -115,11 +124,18 @@ make build
 ./bin/despensa undo <id>
 ```
 
-Phase B is testable for free, which is the reason it comes before WhatsApp: the host is the person's Claude Desktop, so it calls the model on their subscription and `cmd/mcp` holds no API key. The adversarial passes to run there are in the plan's §"Verificação ponta a ponta", item 3 — especially an unknown item, an unknown portion, a vague sentence, and two items matching one word.
+Phase B, without a model — the protocol and the database, driven the way a host drives them:
+
+```bash
+make build
+claude mcp add despensa -- env DATABASE_URL="$DATABASE_URL" go run ./cmd/mcp
+```
+
+Phase B **with** a model is the pass that has not been run, and it is free: the host is the person's Claude Desktop, so it calls the model on their subscription and `cmd/mcp` holds no API key. The adversarial sentences are in the plan's §"Verificação ponta a ponta", item 3 — especially an unknown item, an unknown portion, a vague sentence, and two items matching one word. What is being tested there is the wording in `internal/agent/descriptions.go`, not the code: if the model asks for confirmation, or asks how much a cup weighs, the sentence that forbids it needs rewriting, and the golden test needs the new phrasing.
 
 ## 8. Open questions for the human
 
 1. **The WhatsApp number** is the only external blocker for phase C: it must not be registered on regular WhatsApp. The unverified Meta business portfolio tier (250 recipients/24h, no CNPJ) is enough for one household, but that came from third-party sources — confirm it in Meta's messaging-limits documentation before building on it. Telegram is the fallback behind the same port, not a replanning.
 2. **The model for the bot** is a config value (`ANTHROPIC_MODEL`), unset so far. At roughly 2K in / 200 out tokens per message and ten messages a day: Opus 5.5 ≈ US$ 3.60/month, Haiku 5.5 ≈ US$ 0.09. What matters is the quality of portion estimates, so start high and measure.
-3. **Neon `dev` holds test data** from the phase A run — `arroz` at 540 g after a deliberate drift experiment, `pão de forma`, and a "papel toalha" note. Nobody has decided whether to keep it as a starting pantry or wipe it.
+3. **Neon `dev` holds test data** from the phase A run — `arroz` at 540 g after a deliberate drift experiment, `pão de forma`, and a "papel toalha" note. The phase B smoke run added `concha` = 220 g to rice's vocabulary and two ledger rows, one of them undone; the levels are where they were. Nobody has decided whether to keep any of it as a starting pantry or wipe it.
 4. **The weekly digest needs one approved Meta utility template** (`lista_semanal`). Confirm current Brazilian pricing on Meta's own pricing page; it changed in 2026 and third-party sources disagree. The fallback, if approval stalls, is to hold the digest and deliver it on the next inbound message.

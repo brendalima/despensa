@@ -22,6 +22,10 @@ status: ## Show what is in the pantry
 build: ## Build every binary into bin/
 	go build -trimpath -o bin/ ./cmd/...
 
+.PHONY: mcp
+mcp: ## Serve the pantry as MCP tools over stdio
+	go run ./cmd/mcp
+
 .PHONY: test
 test: ## Run tests with the race detector
 	go test -race ./...
