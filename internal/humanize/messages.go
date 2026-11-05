@@ -136,7 +136,38 @@ func Error(err error) string {
 	}
 
 	// A bug or an outage. Saying so beats a cheerful lie.
+	return Trouble()
+}
+
+// Trouble is what a failure nobody planned for sounds like. It says
+// what was not written, because the opposite — a cheerful receipt for
+// a row that does not exist — is the one thing this product cannot do.
+func Trouble() string {
 	return "Deu problema para salvar agora. Não anotei nada — pode repetir em um minuto?"
+}
+
+// UndoLabel is the button on every receipt.
+const UndoLabel = "Desfazer"
+
+// NotForYou answers a number that is not on the list. Neutral on
+// purpose: it neither confirms what this is nor denies it, and it costs
+// no model call.
+func NotForYou() string {
+	return "Oi! Esse número não atende por aqui."
+}
+
+// NothingToRead answers a message with nothing in it to act on — a
+// photo, an audio, a tap on something that is no longer there.
+func NothingToRead() string {
+	return "Não consegui ler essa. Me manda em texto o que você usou ou comprou?"
+}
+
+// GotLost answers the one case where the loop gave up: the model used
+// its tool budget without arriving at a sentence. What was written is
+// written, so the honest answer points at the pantry instead of
+// inventing a receipt.
+func GotLost() string {
+	return "Me perdi no meio dessa. Confere a despensa e, se faltou anotar algo, me diz de novo?"
 }
 
 // unitOnly renders in the plain unit even when the item has a word for

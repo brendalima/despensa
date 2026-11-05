@@ -2,12 +2,13 @@
 
 For whoever picks up phase C. Everything below was verified against the repo and the database, not recalled. Where something was not verified, it says so.
 
-Last verified: 2026-11-05 · branch `agent-tools` at `1fc5739` · phases A and B done.
+Last verified: 2026-11-05 · branch `whatsapp-bot` · phases A, B and C built.
 
 > **Read first**
 > - **Phase A is done and verified end to end**, against real Postgres 18 on Neon. The CLI (`cmd/despensa`) is the whole of it, and it works: create, buy, use, undo, drift, correct, shopping list.
 > - **Phase B is done and verified against the protocol and the database, but not yet against a real model.** The six tools are in `internal/agent`, the stdio server in `cmd/mcp`. The one thing left is §7's Claude Desktop pass, which is the only way to find out whether the descriptions actually steer a model.
-> - **Phases C and D are not started.** The plan is `docs/plans/despensa.md` (Portuguese), phase by phase, with the reasoning behind each cut. Read its "O que vem do plano da Venus, e o que eu corto de propósito" before adding anything the plan deliberately removed.
+> - **Phase C is built and tested, and has never seen a real delivery.** `internal/bot` is the conversation, `internal/bot/whatsapp` and `internal/bot/claude` the two adapters, `cmd/api` the webhook. Every rule has a test; what is missing is a WhatsApp number, which is the one external blocker, and a Fly app.
+> - **Phase D is not started.** The plan is `docs/plans/despensa.md` (Portuguese), phase by phase, with the reasoning behind each cut. Read its "O que vem do plano da Venus, e o que eu corto de propósito" before adding anything the plan deliberately removed.
 > - **Go is not on PATH.** It is at `~/.local/go` (1.27.3, installed by hand because the machine had none). Every command below assumes `export PATH=$HOME/.local/go/bin:$PATH`.
 > - **You cannot push from this machine.** See §6.
 
@@ -33,13 +34,23 @@ A home pantry inventory whose interface is a sentence in WhatsApp: *"usei duas f
 - **The built binary against Neon `dev`,** driven through `mcp.CommandTransport` the way a host drives it: `list_inventory` and `shopping_list` returned the real pantry, `record_events` took rice from 540 g to 320 g while learning `concha` = 220 g, the first `undo_event` put it back, and the second said *"Esse já estava desfeito"*.
 - **The test suites bite.** Four deliberate mutations were planted in phase A and each failed the right test: threshold crossing as a state, an estimate overwriting a known portion, a Portuguese literal in the core, and an `os.Getenv` inside `internal/`. Six more were planted in phase B: a Portuguese literal outside `descriptions.go`, `internal/agent` importing the MCP SDK, a schema that stopped being closed, the no-confirmation sentence deleted from the prompt, the event source hardcoded, and a tool failure raised as a protocol error.
 
+### Built in phase C, and tested — but never run for real
+
+- **The conversation.** `internal/bot` holds the loop and the Portuguese system prompt (`prompt.go`, with a golden test over the sentences that invert the obvious). Three ports: `Messenger` and `Webhook` for the provider, `Model` for the model. The six tools come from `internal/agent` unchanged, so Claude Desktop and WhatsApp cannot disagree about what a word is worth.
+- **The adapters.** `internal/bot/whatsapp` is the Cloud API: HMAC-SHA256 over the raw body with `hmac.Equal`, the GET subscription handshake, Meta's payload (text and both button shapes), and sending text, buttons and templates. `internal/bot/claude` is the only importer of the Anthropic SDK: `claude-opus-5-5` by default, effort `low`, `max_tokens` 1024, thinking left unset.
+- **The HTTP border.** `internal/rest` has the webhook (403 on a bad signature **before** the payload is parsed, 200 before the work, `Wait()` for in-flight messages on shutdown) and `/healthz` (no database) / `/readyz` (database). `cmd/api` wires it, `adapters/api_config.go` reads and validates the new variables.
+- **The short history.** `conversation_turns` is now used: `repository.Conversation` plus `services.Chat`, a 30-minute window and a 20-turn cap, with three integration tests against Neon. An assistant turn is stored as the model wrote it and replayed byte for byte.
+- **The tests, 35 of them across five packages:** a number outside the list costs zero model calls and zero claims; a redelivery is handled once; the iteration cap holds at 3 in the test and the answer says so; a `undo:` button never reaches the model; the receipt carries one button per event with the right payload; a schema refusal comes back as an `is_error` result and the model gets a second turn; the history reaches the model and is stored; eight shapes of wrong signature all fail closed; Meta's payload tree is read and everything unreadable is skipped; the schemas reach the model closed, with the descriptions unchanged; a model refusal is an error, not an answer.
+- **Deployment.** Multi-stage `Dockerfile` (static binary, `go mod download` before the source, non-root) and `fly.toml` with the migration as `release_command`, scale to zero, and the health check on `/healthz`.
+
 ### Not done
 
 - **Phase B's model pass.** Everything is tested, but no model has ever called these tools. The adversarial sentences are in §7; they are free to run, and they are the only evidence that the descriptions work.
-- **Phase C** — `internal/bot`, `internal/bot/whatsapp`, `cmd/api`. Nothing exists; no WhatsApp number has been obtained, which is the one external blocker.
-- **Phase D** — `cmd/digest` and the Meta template.
-- **`conversation_turns` is created and unused** (0 references in Go). It is phase C's short history, migrated early on purpose.
-- **No Dockerfile, no fly.toml, no CI.** They belong with phase C, which is the first phase with something to host.
+- **Phase C against reality.** No number, no Meta app, no Fly app, no secrets set, so no real message has ever arrived. §7 has the pass to run once the number exists, including the two negatives — a stranger's message and a repeated `message_id` — that are the point of the guards.
+- **Phase D** — `cmd/digest` and the Meta template. `Messenger.SendTemplate` and `WHATSAPP_DIGEST_TEMPLATE` are already there, unused.
+- **No CI.** `make check` is the gate, run by hand. It was last run green on this branch: gofmt, vet, staticcheck, `go test -race` (integration tests included, against Neon `test`) and govulncheck with no findings.
+- **The image has never been built.** There is no docker on this machine, so the `Dockerfile` is unverified and `fly deploy` would be its first build; `fly.toml` does pass `flyctl config validate`. No Fly app exists yet either.
+- **Nothing prunes `conversation_turns`.** `services.Chat.Forget` exists and nobody calls it: the window is applied on read, so the rows are harmless but they accumulate. The obvious home is `cmd/digest`, which already runs weekly.
 
 ## 3. Non-negotiables
 
@@ -51,7 +62,8 @@ These are decisions, not preferences. Changing one changes the product.
 4. **The ledger is the inventory.** `items.on_hand_milli == SUM(delta_milli) WHERE undone_at IS NULL`, per item. Undo marks `undone_at` and subtracts the delta; it does **not** append an inverse row.
 5. **Integers only.** Every quantity is a `BIGINT` in thousandths of the item's canonical unit. The only two float boundaries are `domain.QtyFromFloat` and `domain.AmountFromFloat`; keep them the only ones.
 6. **The language boundary.** Code, comments, logs, `Error()` and data-model enums in English; what the bot says, the tool descriptions, and the data (`items.name`, `portions.name`, aliases) in Portuguese. No accented string literal under `internal/core/` — `internal/architecture_test.go` fails the build over it. Domain errors carry a stable `Code()`; `internal/humanize` owns every word a person reads.
-7. **No HTTP between the tools and the services.** One service, one user: `cmd/mcp` and the bot call `services.Pantry` in process. The plan cut the write API, the per-admin tokens, the wake-up client and the `expected_quantity`/409 dance, and §"o que eu corto" says why.
+7. **The allowed list of numbers is not a preference.** Anyone who can send a message can write to the pantry, so prompt injection adds no power — which is exactly why the list, and the signature in front of it, are the two things that cannot be relaxed "for a test". `internal/bot` refuses an unknown number before the model, before the claim and before any read.
+8. **No HTTP between the tools and the services.** One service, one user: `cmd/mcp` and the bot call `services.Pantry` in process. The plan cut the write API, the per-admin tokens, the wake-up client and the `expected_quantity`/409 dance, and §"o que eu corto" says why.
 
 ## 4. The quantity model, which is where a new agent will go wrong
 
@@ -82,6 +94,12 @@ pão de forma   unit=un  on_hand=16_000      fatia=1_000  · pacote=22_000
 - **`internal/agent` validates its own arguments, on purpose.** Phase C has no SDK in front of it doing that, and two validators would mean two sets of rules. Call tools through `ToolSet.Call`, never `Tool.Handler` directly, or nothing is checked.
 - **A word is learned even if the event is undone.** The portion is written before the event, and `undo_event` reverses the quantity, not the vocabulary. That is the right way round — consistency of the word is the point — but it means the smoke run left `concha` = 220 g on rice in Neon `dev`.
 - **`humanize.Secondary` picks the largest portion that lands between 2 and 40.** Adding a word therefore changes how an existing item reads: once rice knew `concha`, `540 g (≈3 taças)` became `540 g (≈2,5 conchas)`. Not a bug, but it will look like one in a diff of expected output.
+- **The order of the guards in `internal/bot.handle` is the security of the service**, and nothing in the compiler protects it: the allowed list before the claim, the claim before the model, the button before the model. Moving the claim above the allowed list would let a stranger spend a row; moving it below the model would let a redelivery spend a model call.
+- **`cmd/api` answers 200 before the work and hands each message a context of its own.** Using the request's context would cancel the work the moment the reply is written, and the person would get nothing while Meta is told the message arrived. Shutdown calls `rest.WhatsApp.Wait()` for the same reason.
+- **An assistant turn is replayed from `Turn.Raw`, not rebuilt.** The generic fields are what the loop reasons about; the raw copy is what the model is given back. Rebuilding one drops the reasoning blocks, which on current models is an edited history — and an edited history is refused outright for accounts created after 2026-08-31. If a new field is needed on a turn, add it alongside `Raw`, do not start assembling messages from parts.
+- **The Graph API version is pinned** (`graphVersion` in `internal/bot/whatsapp/messenger.go`, currently `v23.0`). Meta retires versions on a schedule, and this one was not confirmed against their docs — confirm it when the number is registered.
+- **`ANTHROPIC_MODEL` defaults to `claude-opus-5-5` and effort is `low`**, set in code (`internal/bot/claude/claude.go`) because it is the shape of the work, not a knob. If estimates come out bad, raise the effort before changing the model: the plan's cost table says the model is cheaper than the WhatsApp messages either way.
+- **`internal/bot/claude.Input.BaseURL` and `whatsapp.MessengerInput.BaseURL` exist for the tests.** They are the only reason the mapping can be checked without a key or a number; leave them, and do not set them in `cmd/api`.
 - **Logs in `cmd/mcp` must go to stderr.** `main` sets a stderr `slog` handler before anything else; stdout carries the JSON-RPC frames, and one stray line corrupts the session instead of showing up as a log.
 
 ## 6. What you cannot do from this machine
@@ -131,11 +149,33 @@ make build
 claude mcp add despensa -- env DATABASE_URL="$DATABASE_URL" go run ./cmd/mcp
 ```
 
+Phase C, without a number — what the tests already cover, by hand:
+
+```bash
+make check
+make api &   # needs ANTHROPIC_API_KEY and the WHATSAPP_* variables in .env.local
+# A fake delivery, signed the way Meta signs it. `from` has to be a number
+# on WHATSAPP_ALLOWED_NUMBERS, or the only thing proved is the guard.
+BODY='{"entry":[{"changes":[{"field":"messages","value":{"messages":[{"id":"wamid.test","from":"<seu numero>","type":"text","text":{"body":"usei uma taça de arroz"}}]}}]}]}'
+SIG="sha256=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$WHATSAPP_APP_SECRET" -hex | awk '{print $2}')"
+curl -i -XPOST localhost:8080/webhooks/whatsapp -H "X-Hub-Signature-256: $SIG" -d "$BODY"
+```
+
+Expect `200`, a model call, and a send attempt that fails at Meta — which is as far as this goes without a number. Repeat the same body: the second one must do nothing (the claim), and `processed_messages` must have one row. Change one character of `$BODY` without re-signing: `403`, and the logs must show nothing parsed.
+
+Phase C **with** a number, once there is one:
+
+1. `fly secrets set` every variable in `.env-sample` — the Anthropic key included, and never in the shell profile.
+2. `fly deploy`. The release command runs `cmd/migrate`; the API never migrates.
+3. Point Meta's webhook at `https://<app>.fly.dev/webhooks/whatsapp` with `WHATSAPP_VERIFY_TOKEN`. The GET handshake has to answer the challenge as plain text.
+4. From the phone: *"usei duas fatias de pão e uma taça de arroz"* → a receipt in seconds → **Desfazer** → the levels come back. `fly logs` must show one model call.
+5. The two negatives, which are the whole point of the guards: a message from a number **outside** `WHATSAPP_ALLOWED_NUMBERS` → zero model calls and zero tool calls in `fly logs`; the same `message_id` replayed by hand → nothing happens.
+
 Phase B **with** a model is the pass that has not been run, and it is free: the host is the person's Claude Desktop, so it calls the model on their subscription and `cmd/mcp` holds no API key. The adversarial sentences are in the plan's §"Verificação ponta a ponta", item 3 — especially an unknown item, an unknown portion, a vague sentence, and two items matching one word. What is being tested there is the wording in `internal/agent/descriptions.go`, not the code: if the model asks for confirmation, or asks how much a cup weighs, the sentence that forbids it needs rewriting, and the golden test needs the new phrasing.
 
 ## 8. Open questions for the human
 
 1. **The WhatsApp number** is the only external blocker for phase C: it must not be registered on regular WhatsApp. The unverified Meta business portfolio tier (250 recipients/24h, no CNPJ) is enough for one household, but that came from third-party sources — confirm it in Meta's messaging-limits documentation before building on it. Telegram is the fallback behind the same port, not a replanning.
-2. **The model for the bot** is a config value (`ANTHROPIC_MODEL`), unset so far. At roughly 2K in / 200 out tokens per message and ten messages a day: Opus 5.5 ≈ US$ 3.60/month, Haiku 5.5 ≈ US$ 0.09. What matters is the quality of portion estimates, so start high and measure.
+2. **The model for the bot** is a config value (`ANTHROPIC_MODEL`), defaulting to `claude-opus-5-5` since phase C. At roughly 2K in / 200 out tokens per message and ten messages a day: Opus 5.5 ≈ US$ 3.60/month, Haiku 5.5 ≈ US$ 0.09. What matters is the quality of portion estimates, so start high and measure.
 3. **Neon `dev` holds test data** from the phase A run — `arroz` at 540 g after a deliberate drift experiment, `pão de forma`, and a "papel toalha" note. The phase B smoke run added `concha` = 220 g to rice's vocabulary and two ledger rows, one of them undone; the levels are where they were. Nobody has decided whether to keep any of it as a starting pantry or wipe it.
 4. **The weekly digest needs one approved Meta utility template** (`lista_semanal`). Confirm current Brazilian pricing on Meta's own pricing page; it changed in 2026 and third-party sources disagree. The fallback, if approval stalls, is to hold the digest and deliver it on the next inbound message.

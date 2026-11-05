@@ -42,6 +42,34 @@ var forbidden = map[string][]string{
 		"github.com/jackc/pgx", "github.com/modelcontextprotocol/go-sdk",
 		"github.com/anthropics/anthropic-sdk-go",
 	},
+	// The bot is a driver: it may know HTTP and the model's SDK, and it
+	// must not know persistence. The pantry reaches it as a service
+	// interface, so a rule cannot grow in the conversation layer.
+	"internal/bot": {
+		modulePath + "/adapters", modulePath + "/internal/repository",
+		"database/sql", "github.com/jackc/pgx",
+		"github.com/anthropics/anthropic-sdk-go",
+	},
+	// The model adapter is the only place that imports the SDK, and it
+	// knows nothing about where a message came from or where it goes.
+	"internal/bot/claude": {
+		modulePath + "/adapters", modulePath + "/internal/repository",
+		modulePath + "/internal/bot/whatsapp",
+		"database/sql", "github.com/jackc/pgx",
+	},
+	// The provider adapter is the other half: HTTP and Meta's payloads,
+	// with no model and no pantry in it.
+	"internal/bot/whatsapp": {
+		modulePath + "/adapters", modulePath + "/internal/repository",
+		modulePath + "/internal/core/services", modulePath + "/internal/bot/claude",
+		"database/sql", "github.com/jackc/pgx",
+		"github.com/anthropics/anthropic-sdk-go",
+	},
+	"internal/rest": {
+		modulePath + "/adapters", modulePath + "/internal/repository",
+		"database/sql", "github.com/jackc/pgx",
+		"github.com/anthropics/anthropic-sdk-go",
+	},
 	// humanize is presentation and nothing else: it turns domain values
 	// into Portuguese. An import of the service from here would make the
 	// wording a layer that can also write to the database.
@@ -124,6 +152,7 @@ func TestNoPortugueseInsideTheCore(t *testing.T) {
 func TestPortugueseLivesInOneFilePerPackage(t *testing.T) {
 	wording := map[string]string{
 		"agent":    "descriptions.go",
+		"bot":      "prompt.go",
 		"humanize": "", // the whole package is wording
 	}
 

@@ -26,6 +26,10 @@ build: ## Build every binary into bin/
 mcp: ## Serve the pantry as MCP tools over stdio
 	go run ./cmd/mcp
 
+.PHONY: api
+api: ## Serve the WhatsApp webhook
+	go run ./cmd/api
+
 .PHONY: test
 test: ## Run tests with the race detector
 	go test -race ./...
