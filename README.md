@@ -93,7 +93,7 @@ The repository tests talk to a real Postgres and **skip** without
 
 | Phase | Delivers | State |
 |---|---|---|
-| A | Domain, ledger, repository, services, CLI | done, except running the migrations against a real database |
+| A | Domain, ledger, repository, services, CLI | done, verified against Postgres on Neon |
 | B | Tools + MCP server (stdio) | to do |
 | C | WhatsApp bot | to do |
 | D | Weekly digest | to do |
