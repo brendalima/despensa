@@ -97,16 +97,16 @@ func run(args []string) error {
 func usage() {
 	fmt.Fprint(os.Stderr, `despensa — a despensa de casa na linha de comando
 
-  status                                     o que tem na despensa
-  add NOME UNIDADE --portion nome=qtd ...     cria um item (unidade: g, ml, un)
-  use NOME PORÇÃO [QTD]                       usei
-  buy NOME PORÇÃO [QTD]                       comprei
-  have NOME PORÇÃO QTD                        tenho mais ou menos isso
-  toss NOME PORÇÃO [QTD]                      joguei fora
-  undo ID                                     desfaz um evento
-  shopping                                    lista de compras
-  note TEXTO                                  anota algo que não é estoque
-  history NOME                                o que aconteceu com um item
+  status                                   o que tem na despensa
+  add NOME UNIDADE --portion nome=qtd ...  cria um item (unidade: g, ml, un)
+  use NOME PORÇÃO [QTD]                    usei
+  buy NOME PORÇÃO [QTD]                    comprei
+  have NOME PORÇÃO QTD                     tenho mais ou menos isso
+  toss NOME PORÇÃO [QTD]                   joguei fora
+  undo ID                                  desfaz um evento
+  shopping                                 lista de compras
+  note TEXTO                               anota algo que não é estoque
+  history NOME                             o que aconteceu com um item
 
 `)
 }
