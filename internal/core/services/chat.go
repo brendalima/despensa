@@ -12,6 +12,22 @@ import (
 
 var _ ChatService = (*Chat)(nil)
 
+// The window and the cap are the same two numbers for every binary that
+// touches a conversation: the API reads the history with them and the
+// weekly digest prunes with them. They live here, next to the rule they
+// are, rather than once per composition root — two mains drifting apart
+// on this would mean the pruner deleting what the reader still wants.
+const (
+	// DefaultConversationWindow is how long a sentence stays
+	// unfinished: long enough that "e mais uma taça" still means rice,
+	// short enough that yesterday does not answer today.
+	DefaultConversationWindow = 30 * time.Minute
+
+	// DefaultConversationLimit caps how many turns one request
+	// carries, so an argument with the bot cannot grow without bound.
+	DefaultConversationLimit = 20
+)
+
 // Chat is the plumbing around one incoming message: the idempotency
 // guard and the short history. It is a service rather than two
 // repositories handed to the bot, because the window and the cap are

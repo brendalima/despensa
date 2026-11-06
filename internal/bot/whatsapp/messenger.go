@@ -19,10 +19,17 @@ var _ bot.Messenger = (*Messenger)(nil)
 const (
 	// graphBaseURL and graphVersion are pinned: Meta retires versions
 	// on a schedule, and a silent upgrade is a silent change in what
-	// the payloads mean. Confirm the current one when the number is
-	// registered.
+	// the payloads mean.
+	//
+	// Checked against Meta's own versioning page on 2026-11-06, which
+	// names v27.0 the most recent and gives every version at least two
+	// years from release. The v23.0 this used to be was good until
+	// 2027-10-08, so this is a refresh and not a fix — but it has
+	// never been exercised against the live API, because no send has
+	// ever reached a phone. The hello_world send that registers a new
+	// number is the first thing that will test it.
 	graphBaseURL = "https://graph.facebook.com"
-	graphVersion = "v23.0"
+	graphVersion = "v27.0"
 
 	// languageCode is the template's language, which Meta matches
 	// exactly against the approved template.

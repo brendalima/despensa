@@ -29,6 +29,7 @@ type Bot struct {
 	model     Model
 	messenger Messenger
 	chat      Chat
+	digests   Digests
 
 	// allowed is the closed list of numbers. Anyone who can send a
 	// message can write to the pantry, so this is not a preference.
@@ -45,6 +46,7 @@ type Input struct {
 	Model     Model
 	Messenger Messenger
 	Chat      Chat
+	Digests   Digests
 
 	AllowedNumbers []string
 	MaxIterations  int
@@ -63,6 +65,9 @@ func New(in Input) (*Bot, error) {
 	if in.Chat == nil {
 		return nil, errors.New("missing chat dependency")
 	}
+	if in.Digests == nil {
+		return nil, errors.New("missing digests dependency")
+	}
 	if len(in.AllowedNumbers) == 0 {
 		return nil, errors.New("missing allowed numbers")
 	}
@@ -80,6 +85,7 @@ func New(in Input) (*Bot, error) {
 		model:         in.Model,
 		messenger:     in.Messenger,
 		chat:          in.Chat,
+		digests:       in.Digests,
 		allowed:       allowed,
 		maxIterations: in.MaxIterations,
 	}, nil
@@ -102,6 +108,11 @@ type outcome struct {
 	iterations int
 	tools      []string
 	buttons    int
+
+	// digest records that a weekly list owed from an earlier run rode
+	// out on this turn, which is otherwise invisible: it is a second
+	// message nobody asked for.
+	digest bool
 }
 
 // Handle takes one message to the end. It returns nothing because
@@ -120,6 +131,11 @@ func (b *Bot) Handle(ctx context.Context, msg Message) {
 		return
 	}
 
+	// After the answer, never before it: the digest is a second
+	// message, and a second message that arrives first reads as the
+	// bot ignoring what was just said.
+	done.digest = b.payDigest(ctx, msg, done.kind)
+
 	slog.Info("message handled",
 		"provider", msg.Provider,
 		"message_id", msg.ID,
@@ -127,7 +143,27 @@ func (b *Bot) Handle(ctx context.Context, msg Message) {
 		"iterations", done.iterations,
 		"tools", done.tools,
 		"buttons", done.buttons,
+		"digest", done.digest,
 		"took", time.Since(started).String())
+}
+
+// payDigest settles a digest owed from an earlier week, if one is. It
+// runs only for a turn that actually belonged to the household and
+// actually did something: a stranger's message must cost nothing, and a
+// redelivery already had its chance.
+//
+// It returns whether a digest went out, and never an error. The turn's
+// own answer is already away — failing the message over a late shopping
+// list would be the tail wagging the dog.
+func (b *Bot) payDigest(ctx context.Context, msg Message, kind string) bool {
+	if kind == "refused" || kind == "redelivery" {
+		return false
+	}
+	delivered, err := b.deliverOwed(ctx, msg.ChatID)
+	if err != nil {
+		slog.Warn("couldn't deliver the owed digest", "chat_id", msg.ChatID, "error", err)
+	}
+	return delivered
 }
 
 func (b *Bot) handle(ctx context.Context, msg Message, done *outcome) error {

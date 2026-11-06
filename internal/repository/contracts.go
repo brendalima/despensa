@@ -81,3 +81,21 @@ type ConversationRepository interface {
 	// Forget drops everything older than a moment.
 	Forget(ctx context.Context, before time.Time) (int64, error)
 }
+
+// DigestRepository is the weekly digest's debt book: the row that says
+// a digest was owed and never sent.
+type DigestRepository interface {
+	// Owe records that a chat is owed a digest, and reports whether
+	// this call is the one that created the debt. A second call while
+	// the first is unpaid gets false and writes nothing: three weeks
+	// without an approved template owe one digest, not three.
+	Owe(ctx context.Context, chatID string, dueAt time.Time) (bool, error)
+
+	// Owed returns the digest a chat is still waiting for. The second
+	// return is false when nothing is owed, which is the normal case.
+	Owed(ctx context.Context, chatID string) (domain.Digest, bool, error)
+
+	// Paid marks a debt settled. It is called after the message is
+	// away, so a failed send leaves the debt standing.
+	Paid(ctx context.Context, id int64) error
+}
