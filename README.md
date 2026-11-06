@@ -73,6 +73,11 @@ make migrate
 make check              # fmt, vet, staticcheck, tests with -race, govulncheck
 ```
 
+The same gate runs in CI on every pull request
+([`.github/workflows/ci.yml`](.github/workflows/ci.yml)); it needs
+`TEST_DATABASE_URL` as a repository secret, and fails loudly rather than letting
+the integration tests skip in silence. The Fly deploy waits for it.
+
 The CLI is the whole of Phase A, with no model and no WhatsApp in the way — if
 the arithmetic or the ledger are wrong, they are wrong here, where there is
 nothing else to blame:
@@ -181,14 +186,53 @@ profile: an exported key makes Claude Code stop using the subscription and bill
 the key instead. Deployment is `fly.toml` plus the `Dockerfile`; the migration is
 the release command, never the startup.
 
+## The weekly digest
+
+Phase D is `cmd/digest`: the one message this service ever starts. Everything
+else it sends is a reply to something a person typed, and that single difference
+is what shapes the whole binary.
+
+Outside WhatsApp's 24-hour window Meta accepts nothing but a template it has
+approved, so the digest goes out as `WHATSAPP_DIGEST_TEMPLATE` with the list as
+its one body parameter — on one line, because a parameter is substituted into a
+sentence the template already owns. If there is no approved template, or Meta
+refuses the send, the digest is **owed** rather than dropped: a row in
+`pending_digests`, delivered as plain text on the next message from the
+household. An inbound message is also what reopens the 24-hour window, so that
+is the one moment free-form text is allowed at all.
+
+Only the fact is stored, never the sentence. The shopping list is derived on
+every read, so a digest owed on Sunday and paid on Tuesday says what the pantry
+holds on Tuesday — a stored sentence would be the only thing here that can
+disagree with the ledger. A partial unique index keeps one debt per chat, so
+three weeks without an approved template owe one list and not three.
+
+An empty list is not sent at all. It is the only message that costs money per
+send and that nobody asked for, and a weekly *"não está faltando nada"* is the
+exact habit that teaches a person to stop reading it.
+
+The same run prunes `conversation_turns` past the window. Nothing else does, and
+rows nobody will ever read are still a log of everything said in a kitchen.
+
+```bash
+make digest     # send it once, now
+
+# Weekly, on the same image the API runs, as a scheduled Fly machine.
+fly machine run --schedule weekly --command /app/digest <image>
+```
+
+Low-stock alerts need none of this. `Receipt.CrossedThreshold` is a *moment*,
+not a state, so it rides out on the reply to the message that caused it: no
+scheduled job, no template, no cost.
+
 ## State
 
 | Phase | Delivers | State |
 |---|---|---|
 | A | Domain, ledger, repository, services, CLI | done, verified against Postgres on Neon |
-| B | Tools + MCP server (stdio) | done, tested; not yet tried against a real model |
-| C | WhatsApp bot | built and tested; not yet run against a real number |
-| D | Weekly digest | to do |
+| B | Tools + MCP server (stdio) | done, tested; a model has read the descriptions and the read tools, never the writes |
+| C | WhatsApp bot | built, tested and deployed; no message has reached a phone (see the handoff) |
+| D | Weekly digest | built and tested; needs an approved template and the scheduled machine |
 
 Picking this up: read [`docs/HANDOFF.md`](docs/HANDOFF.md) first, then
 [`docs/plans/despensa.md`](docs/plans/despensa.md) for the phase-by-phase
