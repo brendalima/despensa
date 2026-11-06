@@ -256,7 +256,36 @@ Phase B **with** a model is the pass that has not been run, and it is free: the 
 
 In order, because each step is cheap and the next one is only worth running if the previous passed.
 
-1. **Register it** in Meta → WhatsApp → API Setup, verify it, set a display name. Note the new `WHATSAPP_PHONE_NUMBER_ID`.
+1. **Adding, verifying and registering are three steps, and the last one has no UI.** This is the step the previous version of this handoff got wrong, and it costs an afternoon: a number that is added and SMS-verified shows **Pendente** in WhatsApp Manager with *"Registre este número de telefone usando a API de registro"*, and nothing in any dashboard will clear it. Meta is explicit — *"You can only register a number via the API — you cannot register a number through WhatsApp Manager (WAM) or the App Dashboard."* Verifying proves you own the number; registering activates it on the Cloud API.
+
+   In order (all confirmed on Meta's docs on 2026-11-06, <https://developers.facebook.com/docs/whatsapp/cloud-api/reference/registration> and <https://developers.facebook.com/documentation/business-messaging/whatsapp/business-phone-numbers/phone-numbers>):
+
+   1. Add the number in WhatsApp Manager and verify ownership by SMS. Both are UI steps.
+   2. **Set the display name before registering.** The docs say display name information is required at registration, and `name_status: NONE` means *"The phone number does not have a certificate and cannot be used to register the phone number for API use."* There is no display-name field on the register call, so it has to already be set. (If the name is ever *changed* later, wait for approval and then re-register — "re-registering before approval has no effect".)
+   3. Note the new `WHATSAPP_PHONE_NUMBER_ID`, which belongs to this number and is not the test number's.
+   4. **Register:**
+      ```bash
+      curl -X POST "https://graph.facebook.com/v27.0/$PNID/register" \
+        -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' \
+        -d '{"messaging_product": "whatsapp", "pin": "<six digits you choose>"}'
+      ```
+   5. **Confirm it took.** `Pendente` has to become `CONNECTED`; a number only sends and receives when it is:
+      ```bash
+      curl -s "https://graph.facebook.com/v27.0/$PNID?fields=status,name_status,code_verification_status" \
+        -H "Authorization: Bearer $TOK"
+      ```
+
+   **Three things about that PIN, in order of how much they will hurt.**
+
+   - **If the number has no two-step verification yet, the six digits in that call *become* its PIN.** You are not supplying an existing secret, you are choosing one. If it already has 2FA, the value must be the existing PIN instead.
+   - **Write it down somewhere that is not this repository.** Meta requires it to change the PIN later and to delete the number from the platform, and says two-step verification **cannot be disabled through the API**. The app itself never uses it: it is an operational secret, so it belongs in a password manager, **not** in `.env-sample`, `.env.local` or `fly secrets`.
+   - **There are only ten attempts per number per 72 hours.** The eleventh returns error `133016` and blocks registration for three days. So do not iterate on this call — get the display name and the PIN right first. A wrong-PIN lockout rule is not documented anywhere, which is its own reason not to guess.
+
+   **Two preconditions that are silent until they are not.** A number already in use on the consumer WhatsApp app *"cannot be registered unless [it is] deleted first"* — receiving ordinary calls and SMS on the handset is irrelevant and fine, having installed WhatsApp on it is not. And a banned number has to be unbanned by appeal before any of this works.
+
+   **Registration is reversible, deletion is less so.** `POST /$PNID/deregister` exists and makes the number unusable with the Cloud API until re-registered, keeping the number and its message history; it shares the same ten-per-72-hours budget. Deleting the number outright is UI-only, needs the PIN once the status is `CONNECTED`, and is refused if the number sent paid messages in the last 30 days.
+
+   `data_localization_region` is an optional field on the register call (`BR` for Brazil, for data at rest). Leave it out — nothing here needs it, and the docs do not say whether it can be changed afterwards.
 2. **`flyctl secrets set WHATSAPP_PHONE_NUMBER_ID=...`** — this restarts the machine. Nothing else changes: the token, the app secret and the verify token belong to the app and the portfolio, not to the number.
 3. **Send `hello_world` and read the status**, before touching the bot at all:
    ```bash
