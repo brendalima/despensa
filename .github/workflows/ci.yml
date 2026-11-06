@@ -9,9 +9,15 @@
 # it, and `-count=1` keeps a cached result from standing in for a run.
 name: CI
 
+# Pull requests only. A `pull_request` run tests the merge preview —
+# main with the branch merged in — so by the time a PR is green, the
+# state main is about to become has already been validated, and running
+# the same suite again on the merge commit doubles the wait to re-prove
+# it. The guarantee that nothing reaches main unvalidated belongs in
+# branch protection, not in a second run of the same tests: require a
+# pull request, require this check, and require branches to be up to
+# date before merging.
 on:
-  push:
-    branches: [main]
   pull_request:
 
 permissions:
