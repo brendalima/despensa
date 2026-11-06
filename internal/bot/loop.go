@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/brendalima/despensa/internal/agent"
 	"github.com/brendalima/despensa/internal/core/domain"
@@ -92,26 +93,49 @@ func MustNew(in Input) *Bot {
 	return b
 }
 
+// outcome is what one message did, collected only so that the happy
+// path leaves a trace. Without it a working turn and a turn that died
+// between the model and the phone look identical in the logs, which is
+// the one thing a service nobody watches cannot afford.
+type outcome struct {
+	kind       string
+	iterations int
+	tools      []string
+	buttons    int
+}
+
 // Handle takes one message to the end. It returns nothing because
 // nobody is waiting: the webhook answered 200 before this started, and
 // the only way to report a failure is to say so in the chat.
 func (b *Bot) Handle(ctx context.Context, msg Message) {
-	err := b.handle(ctx, msg)
-	if err == nil {
+	started := time.Now()
+
+	var done outcome
+	err := b.handle(ctx, msg, &done)
+	if err != nil {
+		slog.Error("couldn't handle message", "provider", msg.Provider, "message_id", msg.ID, "error", err)
+		if sendErr := b.messenger.SendText(ctx, msg.ChatID, humanize.Error(err)); sendErr != nil {
+			slog.Error("couldn't send the failure back", "error", sendErr)
+		}
 		return
 	}
 
-	slog.Error("couldn't handle message", "provider", msg.Provider, "message_id", msg.ID, "error", err)
-	if sendErr := b.messenger.SendText(ctx, msg.ChatID, humanize.Error(err)); sendErr != nil {
-		slog.Error("couldn't send the failure back", "error", sendErr)
-	}
+	slog.Info("message handled",
+		"provider", msg.Provider,
+		"message_id", msg.ID,
+		"outcome", done.kind,
+		"iterations", done.iterations,
+		"tools", done.tools,
+		"buttons", done.buttons,
+		"took", time.Since(started).String())
 }
 
-func (b *Bot) handle(ctx context.Context, msg Message) error {
+func (b *Bot) handle(ctx context.Context, msg Message, done *outcome) error {
 	// Before the model, before the database: an unknown number costs
 	// nothing and learns nothing.
 	if !b.allowed[normalizeNumber(msg.From)] {
 		slog.Warn("message from a number outside the list", "from", msg.From)
+		done.kind = "refused"
 		return b.messenger.SendText(ctx, msg.ChatID, humanize.NotForYou())
 	}
 
@@ -121,19 +145,23 @@ func (b *Bot) handle(ctx context.Context, msg Message) error {
 	}
 	if !mine {
 		slog.Info("redelivery ignored", "provider", msg.Provider, "message_id", msg.ID)
+		done.kind = "redelivery"
 		return nil
 	}
 
 	// A button is an id, not a sentence. Sending it to the model would
 	// pay for a round trip to learn what the payload already says.
 	if msg.Choice != "" {
+		done.kind = "button"
 		return b.choose(ctx, msg)
 	}
 
 	if strings.TrimSpace(msg.Text) == "" {
+		done.kind = "empty"
 		return b.messenger.SendText(ctx, msg.ChatID, humanize.NothingToRead())
 	}
-	return b.converse(ctx, msg)
+	done.kind = "answered"
+	return b.converse(ctx, msg, done)
 }
 
 // choose answers a tap. Only one button exists so far, and it undoes.
@@ -158,7 +186,7 @@ func (b *Bot) choose(ctx context.Context, msg Message) error {
 
 // converse is the tool-use loop: history, then the model, then the
 // tools it asked for, until it answers in words or the cap is reached.
-func (b *Bot) converse(ctx context.Context, msg Message) error {
+func (b *Bot) converse(ctx context.Context, msg Message, done *outcome) error {
 	turns := b.history(ctx, msg.ChatID)
 
 	asked := Turn{Role: domain.TurnUser, Text: msg.Text}
@@ -171,6 +199,7 @@ func (b *Bot) converse(ctx context.Context, msg Message) error {
 	)
 
 	for i := 0; i < b.maxIterations; i++ {
+		done.iterations = i + 1
 		reply, err := b.model.Reply(ctx, Request{System: systemPrompt, Tools: b.tools.Tools(), Turns: turns})
 		if err != nil {
 			b.remember(ctx, msg.ChatID, fresh)
@@ -186,6 +215,7 @@ func (b *Bot) converse(ctx context.Context, msg Message) error {
 
 		results := Turn{Role: domain.TurnUser}
 		for _, call := range reply.ToolCalls {
+			done.tools = append(done.tools, call.Name)
 			result, ids := b.run(ctx, call)
 			results.ToolResults = append(results.ToolResults, result)
 			undoable = append(undoable, ids...)
@@ -203,6 +233,12 @@ func (b *Bot) converse(ctx context.Context, msg Message) error {
 		slog.Warn("the model stopped without an answer",
 			"message_id", msg.ID, "iterations", b.maxIterations)
 		answer = humanize.GotLost()
+		done.kind = "lost"
+	}
+	if len(undoable) > maxButtons {
+		done.buttons = maxButtons
+	} else {
+		done.buttons = len(undoable)
 	}
 	return b.send(ctx, msg.ChatID, answer, undoable)
 }
