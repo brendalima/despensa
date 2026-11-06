@@ -353,3 +353,58 @@ func TestTheBindingBetaIsSent(t *testing.T) {
 		t.Errorf("anthropic-beta = %q, want it to carry %q", got, want)
 	}
 }
+
+// max_tokens bounds thinking, the tool-call JSON and the text
+// together. A sentence naming a whole pantry produces an entries array
+// with a new_item block per line, so a ceiling sized for "a receipt is
+// one or two sentences" truncates the call instead of the answer — and
+// the refusal that follows reads like a confused model.
+func TestMaxTokensFitsABatchToolCall(t *testing.T) {
+	const tenItemBatch = 4096
+	if maxTokens < tenItemBatch {
+		t.Errorf("maxTokens is %d, too small for a sentence naming ten items", maxTokens)
+	}
+}
+
+// A turn cut off at the ceiling has to be distinguishable from a whole
+// one, or the loop runs half a tool call and retries until its budget
+// is gone.
+func TestATurnCutOffAtTheCeilingIsReportedAsTruncated(t *testing.T) {
+	s := newServer(t)
+	s.reply = `{
+	  "id": "msg_1", "type": "message", "role": "assistant", "model": "claude-opus-5-5",
+	  "stop_reason": "max_tokens",
+	  "content": [{"type": "tool_use", "id": "call-1", "name": "record_events", "input": {}}],
+	  "usage": {"input_tokens": 10, "output_tokens": 8192}
+	}`
+	c := newClient(t, s)
+
+	turn, err := c.Reply(context.Background(), bot.Request{
+		System: "oi", Tools: tools(t),
+		Turns: []bot.Turn{{Role: domain.TurnUser, Text: "anota tudo que eu tenho"}},
+	})
+	if err != nil {
+		t.Fatalf("a truncated turn should come back, not error: %v", err)
+	}
+	if !turn.Truncated {
+		t.Error("stop_reason max_tokens did not mark the turn truncated")
+	}
+}
+
+// The ordinary case must not be marked truncated, or every turn ends
+// the loop.
+func TestAWholeTurnIsNotTruncated(t *testing.T) {
+	s := newServer(t)
+	c := newClient(t, s)
+
+	turn, err := c.Reply(context.Background(), bot.Request{
+		System: "oi", Tools: tools(t),
+		Turns: []bot.Turn{{Role: domain.TurnUser, Text: "usei uma taça de arroz"}},
+	})
+	if err != nil {
+		t.Fatalf("the reply failed: %v", err)
+	}
+	if turn.Truncated {
+		t.Error("a turn that ended normally was marked truncated")
+	}
+}

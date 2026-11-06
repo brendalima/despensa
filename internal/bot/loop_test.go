@@ -312,3 +312,45 @@ func TestARefusedReceiptStillSaysWhatWasWritten(t *testing.T) {
 		t.Errorf("the fallback should be plain text, got %d buttons", len(got.buttons))
 	}
 }
+
+// A ten-item inventory truncated the tool call mid-array five times:
+// the arguments arrived as {}, the schema refused them for "missing
+// properties: [entries]", and the loop spent its whole budget retrying
+// a call that truncates in the same place every time.
+//
+// A truncated turn is now neither run nor stored.
+func TestATruncatedTurnIsNeitherRunNorStored(t *testing.T) {
+	h := newHarness(t)
+	h.model.replies = []bot.Turn{{
+		Role:      domain.TurnAssistant,
+		ToolCalls: []bot.ToolCall{{ID: "call-1", Name: agent.ToolRecordEvents, Args: json.RawMessage(`{}`)}},
+		Truncated: true,
+	}}
+
+	h.bot.Handle(context.Background(), text("anota aí o que eu tenho na despensa hoje: ..."))
+
+	// Running a call whose arguments stop mid-array could write the
+	// wrong thing, so it must not reach the pantry at all.
+	if len(h.recorded()) != 0 {
+		t.Errorf("a truncated tool call reached the pantry: %+v", h.recorded())
+	}
+	// One model call, not six: retrying truncates in the same place.
+	if h.model.calls() != 1 {
+		t.Errorf("the loop made %d model calls on a truncated turn, want 1", h.model.calls())
+	}
+	// An assistant tool_use with no tool_result makes the next request
+	// invalid for this chat until the window forgets it.
+	for _, turn := range h.chat.remembered {
+		var stored bot.Turn
+		if err := json.Unmarshal(turn.Content, &stored); err != nil {
+			t.Fatal(err)
+		}
+		if len(stored.ToolCalls) > 0 {
+			t.Errorf("a turn with an unanswered tool call was stored: %s", turn.Content)
+		}
+	}
+	// And the person is told to check rather than given a receipt.
+	if got := h.messenger.last(t).text; got != humanize.GotLost() {
+		t.Errorf("answer = %q, want GotLost()", got)
+	}
+}

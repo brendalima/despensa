@@ -72,6 +72,16 @@ type Turn struct {
 	ToolCalls   []ToolCall   `json:"tool_calls,omitempty"`
 	ToolResults []ToolResult `json:"tool_results,omitempty"`
 
+	// Truncated means the model hit its token ceiling mid-turn, so
+	// this turn is half of something: a tool call whose arguments stop
+	// in the middle, or a sentence that does not finish.
+	//
+	// It is never stored. A turn that was cut off is not conversation,
+	// and storing one carrying an unanswered tool call would poison
+	// the next request outright — an assistant tool_use with no
+	// matching tool_result is refused by the API.
+	Truncated bool `json:"-"`
+
 	// Raw is the provider's own encoding of this turn, stored opaquely
 	// and replayed byte for byte. The fields above are what the loop
 	// reasons about; this is what the model is given back, because a
