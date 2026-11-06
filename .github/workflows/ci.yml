@@ -1,0 +1,74 @@
+# The gate. It runs what `make check` runs, so a green run here and a
+# green `make check` mean the same thing — keep the two in step.
+#
+# The integration tests need TEST_DATABASE_URL as a repository secret,
+# pointing at the Neon test branch and never at dev or production: they
+# write and delete rows. Without the secret they skip *silently*, which
+# would turn this whole workflow into a green light that proves nothing
+# — so the test step asserts the secret is there rather than trusting
+# it, and `-count=1` keeps a cached result from standing in for a run.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: gofmt, vet, staticcheck, test, govulncheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # The toolchain comes from go.mod, so the version that runs
+          # here is the version the Dockerfile builds with.
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "Files not gofmt-clean:"; echo "$out"; exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      # Pinned to the same version as the Makefile. This step has been
+      # reported to fail with `(compile)` errors on files nobody
+      # touched; if it does, this is the first clean machine it can be
+      # diagnosed on.
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
+
+      - name: migrate the test database
+        env:
+          TEST_DATABASE_URL: ${{ secrets.TEST_DATABASE_URL }}
+        run: |
+          if [ -z "$TEST_DATABASE_URL" ]; then
+            echo "TEST_DATABASE_URL is not set: the integration tests would skip silently."
+            exit 1
+          fi
+          DATABASE_URL="$TEST_DATABASE_URL" DATABASE_URL_UNPOOLED="$TEST_DATABASE_URL" \
+            go run ./cmd/migrate
+
+      - name: go test
+        env:
+          TEST_DATABASE_URL: ${{ secrets.TEST_DATABASE_URL }}
+        run: go test -race -count=1 ./...
+
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
