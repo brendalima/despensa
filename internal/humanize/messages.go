@@ -198,8 +198,25 @@ func Trouble() string {
 	return "Deu problema para salvar agora. Não anotei nada — pode repetir em um minuto?"
 }
 
-// UndoLabel is the button on every receipt.
+// UndoLabel is the button on a receipt that wrote one event.
 const UndoLabel = "Desfazer"
+
+// UndoLabelFor names the item a button undoes, for a receipt that wrote
+// more than one event: "Desfazer pão", "Desfazer arroz".
+//
+// Three buttons all reading "Desfazer" are useless to a person — there
+// is no way to tell which is which — and Meta refuses them outright,
+// because button titles have to be unique within a message. The first
+// word of the name is enough to tell them apart and keeps the label
+// inside Meta's twenty characters, where "Desfazer pão de forma" would
+// not fit.
+func UndoLabelFor(item string) string {
+	word := strings.Fields(item)
+	if len(word) == 0 {
+		return UndoLabel
+	}
+	return UndoLabel + " " + word[0]
+}
 
 // NotForYou answers a number that is not on the list. Neutral on
 // purpose: it neither confirms what this is nor denies it, and it costs

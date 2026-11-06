@@ -55,13 +55,32 @@ func (p *fakePantry) List(context.Context) ([]domain.Item, error) {
 	return []domain.Item{rice()}, nil
 }
 
+// bread is the second item, so a sentence naming two things can be
+// tested: that is the shape that broke in production.
+func bread() domain.Item {
+	return domain.Item{
+		ID:        "22222222-2222-2222-2222-222222222222",
+		Name:      "pão de forma",
+		Unit:      domain.UnitPiece,
+		OnHand:    20 * domain.Thousand,
+		Threshold: 4 * domain.Thousand,
+		Portions: []domain.Portion{
+			{Name: "fatia", One: domain.Thousand, Source: domain.PortionSeeded},
+		},
+	}
+}
+
 func (p *fakePantry) Record(_ context.Context, in []domain.EventInput) ([]domain.Receipt, error) {
 	p.recorded = append(p.recorded, in...)
 
 	receipts := make([]domain.Receipt, 0, len(in))
 	for i := range in {
+		item := rice()
+		if i%2 == 1 {
+			item = bread()
+		}
 		receipts = append(receipts, domain.Receipt{
-			Item:    rice(),
+			Item:    item,
 			EventID: int64(100 + i),
 			Before:  5000 * domain.Thousand,
 			After:   4820 * domain.Thousand,
@@ -129,6 +148,11 @@ type sent struct {
 type fakeMessenger struct {
 	sent []sent
 	err  error
+
+	// buttonErr refuses only the interactive send, the way Meta
+	// refuses a message whose button titles repeat while taking the
+	// same text happily.
+	buttonErr error
 }
 
 func (m *fakeMessenger) SendText(_ context.Context, to, text string) error {
@@ -137,6 +161,9 @@ func (m *fakeMessenger) SendText(_ context.Context, to, text string) error {
 }
 
 func (m *fakeMessenger) SendWithButtons(_ context.Context, to, text string, buttons []bot.Button) error {
+	if m.buttonErr != nil {
+		return m.buttonErr
+	}
 	m.sent = append(m.sent, sent{to: to, text: text, buttons: buttons})
 	return m.err
 }
@@ -272,6 +299,10 @@ func newHarness(t *testing.T, replies ...bot.Turn) *harness {
 	h.bot = b
 	return h
 }
+
+// recorded is what reached the pantry, so a test can assert that the
+// writes happened before asserting what the person was told about them.
+func (h *harness) recorded() []domain.EventInput { return h.pantry.recorded }
 
 func text(body string) bot.Message {
 	return bot.Message{

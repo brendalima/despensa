@@ -25,17 +25,26 @@ func Text(result any) string {
 	}
 }
 
-// RecordedEventIDs returns the events a result wrote, newest last, so a
+// Recorded is one event a tool wrote: the id a Desfazer button carries,
+// and the item it touched. The item is there because a sentence naming
+// three things gets three buttons, and three buttons reading "Desfazer"
+// tell the person nothing about which is which.
+type Recorded struct {
+	EventID int64
+	Item    string
+}
+
+// RecordedEvents returns the events a result wrote, newest last, so a
 // receipt can come back with a button per entry. Only record_events
 // returns any: undoing an undo is not a thing.
-func RecordedEventIDs(result any) []int64 {
+func RecordedEvents(result any) []Recorded {
 	r, ok := result.(recordResult)
 	if !ok {
 		return nil
 	}
-	ids := make([]int64, 0, len(r.Receipts))
+	recorded := make([]Recorded, 0, len(r.Receipts))
 	for _, receipt := range r.Receipts {
-		ids = append(ids, receipt.EventID)
+		recorded = append(recorded, Recorded{EventID: receipt.EventID, Item: receipt.Item})
 	}
-	return ids
+	return recorded
 }

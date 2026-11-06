@@ -3,9 +3,11 @@ package bot_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
+	"github.com/brendalima/despensa/internal/agent"
 	"github.com/brendalima/despensa/internal/bot"
 	"github.com/brendalima/despensa/internal/core/domain"
 	"github.com/brendalima/despensa/internal/humanize"
@@ -218,5 +220,95 @@ func TestTheModelGetsTheToolsAndThePrompt(t *testing.T) {
 	}
 	if !strings.Contains(req.System, "list_inventory") {
 		t.Error("the prompt does not tell the model to read the pantry first")
+	}
+}
+
+// The receipt that broke in production: two items, two buttons, and
+// Meta refusing the message because both titles read "Desfazer".
+func TestASentenceNamingTwoItemsGetsDistinguishableButtons(t *testing.T) {
+	h := newHarness(t,
+		toolCall(agent.ToolRecordEvents, `{"entries":[
+			{"kind":"consume","portion_name":"taça","portion_qty":1,"item_id":"`+riceID+`"},
+			{"kind":"consume","portion_name":"fatia","portion_qty":2,"item_id":"22222222-2222-2222-2222-222222222222"}
+		]}`),
+		answer("anotado"))
+
+	h.bot.Handle(context.Background(), text("usei uma taça de arroz e duas fatias de pão"))
+
+	got := h.messenger.last(t)
+	if len(got.buttons) != 2 {
+		t.Fatalf("got %d buttons, want one per event: %+v", len(got.buttons), got.buttons)
+	}
+
+	// The ids were always unique; the titles were not, and the titles
+	// are what Meta rejects.
+	if got.buttons[0].Label == got.buttons[1].Label {
+		t.Errorf("both buttons read %q — Meta refuses that with 131009", got.buttons[0].Label)
+	}
+	if got.buttons[0].ID == got.buttons[1].ID {
+		t.Errorf("both buttons carry %q", got.buttons[0].ID)
+	}
+	// A label that does not name its item is no use to a person either.
+	for _, want := range []string{"arroz", "pão"} {
+		found := false
+		for _, b := range got.buttons {
+			if strings.Contains(b.Label, want) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("no button names %q: %+v", want, got.buttons)
+		}
+	}
+}
+
+// A single event keeps the plain label: there is nothing to tell apart.
+func TestOneEventKeepsThePlainUndoLabel(t *testing.T) {
+	h := newHarness(t,
+		toolCall(agent.ToolRecordEvents, `{"entries":[{"kind":"consume","portion_name":"taça","portion_qty":1,"item_id":"`+riceID+`"}]}`),
+		answer("anotado"))
+
+	h.bot.Handle(context.Background(), text("usei uma taça de arroz"))
+
+	got := h.messenger.last(t)
+	if len(got.buttons) != 1 {
+		t.Fatalf("got %d buttons, want 1", len(got.buttons))
+	}
+	if got.buttons[0].Label != humanize.UndoLabel {
+		t.Errorf("label = %q, want the plain %q", got.buttons[0].Label, humanize.UndoLabel)
+	}
+}
+
+// The bug that actually hurt. The writes had already happened when the
+// send was refused, and the person was told "não anotei nada" about two
+// rows sitting in the ledger — so the natural next move is to re-send
+// the sentence and log everything twice.
+func TestARefusedReceiptStillSaysWhatWasWritten(t *testing.T) {
+	h := newHarness(t,
+		toolCall(agent.ToolRecordEvents, `{"entries":[
+			{"kind":"consume","portion_name":"taça","portion_qty":1,"item_id":"`+riceID+`"},
+			{"kind":"consume","portion_name":"fatia","portion_qty":2,"item_id":"22222222-2222-2222-2222-222222222222"}
+		]}`),
+		answer("arroz: 5 kg → 4,8 kg"))
+	h.messenger.buttonErr = errors.New(`whatsapp refused the message: 400: (#131009) Duplicate button title`)
+
+	h.bot.Handle(context.Background(), text("usei uma taça de arroz e duas fatias de pão"))
+
+	if len(h.recorded()) != 2 {
+		t.Fatalf("the test needs both writes to have happened, got %d", len(h.recorded()))
+	}
+
+	got := h.messenger.last(t)
+	if strings.Contains(got.text, "anotei nada") {
+		t.Errorf("the person was told nothing was written, about rows that were:\n%s", got.text)
+	}
+	if got.text == humanize.Trouble() {
+		t.Error("a refused button turned into humanize.Trouble()")
+	}
+	if !strings.Contains(got.text, "arroz") {
+		t.Errorf("the receipt itself did not arrive: %q", got.text)
+	}
+	if len(got.buttons) != 0 {
+		t.Errorf("the fallback should be plain text, got %d buttons", len(got.buttons))
 	}
 }

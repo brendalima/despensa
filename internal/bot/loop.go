@@ -231,7 +231,7 @@ func (b *Bot) converse(ctx context.Context, msg Message, done *outcome) error {
 
 	var (
 		answer   string
-		undoable []int64
+		undoable []agent.Recorded
 	)
 
 	for i := 0; i < b.maxIterations; i++ {
@@ -283,7 +283,7 @@ func (b *Bot) converse(ctx context.Context, msg Message, done *outcome) error {
 // can read, carrying both the sentence a person would have heard and
 // the English detail, so a wrong call is a correction and not the end
 // of the turn.
-func (b *Bot) run(ctx context.Context, call ToolCall) (ToolResult, []int64) {
+func (b *Bot) run(ctx context.Context, call ToolCall) (ToolResult, []agent.Recorded) {
 	result, err := b.tools.Call(ctx, call.Name, call.Args)
 	if err != nil {
 		slog.Warn("tool refused", "tool", call.Name, "error", err)
@@ -300,11 +300,20 @@ func (b *Bot) run(ctx context.Context, call ToolCall) (ToolResult, []int64) {
 		slog.Error("couldn't encode a tool result", "tool", call.Name, "error", err)
 		return ToolResult{CallID: call.ID, Content: err.Error(), IsError: true}, nil
 	}
-	return ToolResult{CallID: call.ID, Content: string(encoded)}, agent.RecordedEventIDs(result)
+	return ToolResult{CallID: call.ID, Content: string(encoded)}, agent.RecordedEvents(result)
 }
 
 // send puts a Desfazer button on every event this turn wrote.
-func (b *Bot) send(ctx context.Context, chatID, text string, undoable []int64) error {
+//
+// If the buttons are refused, the receipt goes out as plain text
+// instead. That fallback is not politeness: the writes have already
+// happened, and returning the error here would make Handle answer with
+// humanize.Trouble() — "não anotei nada" — about two rows that are
+// sitting in the ledger. A person told that re-sends the sentence and
+// logs everything twice, which is the worst outcome this code can
+// produce. A receipt without a button is a far smaller loss: the events
+// stay undoable by id through the model.
+func (b *Bot) send(ctx context.Context, chatID, text string, undoable []agent.Recorded) error {
 	if len(undoable) == 0 {
 		return b.messenger.SendText(ctx, chatID, text)
 	}
@@ -313,10 +322,22 @@ func (b *Bot) send(ctx context.Context, chatID, text string, undoable []int64) e
 		undoable = undoable[:maxButtons]
 	}
 	buttons := make([]Button, 0, len(undoable))
-	for _, eventID := range undoable {
-		buttons = append(buttons, Button{ID: UndoButtonID(eventID), Label: humanize.UndoLabel})
+	for _, recorded := range undoable {
+		// One event needs no disambiguation; several do, and Meta
+		// refuses a message whose button titles repeat.
+		label := humanize.UndoLabel
+		if len(undoable) > 1 {
+			label = humanize.UndoLabelFor(recorded.Item)
+		}
+		buttons = append(buttons, Button{ID: UndoButtonID(recorded.EventID), Label: label})
 	}
-	return b.messenger.SendWithButtons(ctx, chatID, text, buttons)
+
+	if err := b.messenger.SendWithButtons(ctx, chatID, text, buttons); err != nil {
+		slog.Warn("the receipt's buttons were refused, sending it as text",
+			"chat_id", chatID, "buttons", len(buttons), "error", err)
+		return b.messenger.SendText(ctx, chatID, text)
+	}
+	return nil
 }
 
 // history reads the last turns. A history that cannot be read is worth
