@@ -11,15 +11,18 @@ import (
 
 // Meta's payload is a tree of entries and changes, and a delivery can
 // carry several of each. Only the message types this bot can act on are
-// read; everything else — delivery statuses, reactions, a photo — is
-// skipped rather than refused, because an unreadable notification is
-// not an error worth a redelivery.
+// read, plus the delivery statuses, which act on nothing but are the
+// only record of what became of a message after Meta accepted it.
+// Everything else — a reaction, a photo — is skipped rather than
+// refused, because an unreadable notification is not an error worth a
+// redelivery.
 type payload struct {
 	Entry []struct {
 		Changes []struct {
 			Field string `json:"field"`
 			Value struct {
 				Messages []message `json:"messages"`
+				Statuses []status  `json:"statuses"`
 			} `json:"value"`
 		} `json:"changes"`
 	} `json:"entry"`
@@ -50,6 +53,20 @@ type message struct {
 	} `json:"button"`
 }
 
+type status struct {
+	ID          string `json:"id"`
+	RecipientID string `json:"recipient_id"`
+	Status      string `json:"status"`
+	Errors      []struct {
+		Code      int    `json:"code"`
+		Title     string `json:"title"`
+		Message   string `json:"message"`
+		ErrorData struct {
+			Details string `json:"details"`
+		} `json:"error_data"`
+	} `json:"errors"`
+}
+
 const (
 	typeText        = "text"
 	typeInteractive = "interactive"
@@ -58,13 +75,13 @@ const (
 	fieldMessages = "messages"
 )
 
-func (w *Webhook) Parse(body []byte) ([]bot.Message, error) {
+func (w *Webhook) Parse(body []byte) (bot.Delivery, error) {
 	var in payload
 	if err := json.Unmarshal(body, &in); err != nil {
-		return nil, fmt.Errorf("couldn't decode the whatsapp payload: %w", err)
+		return bot.Delivery{}, fmt.Errorf("couldn't decode the whatsapp payload: %w", err)
 	}
 
-	messages := []bot.Message{}
+	out := bot.Delivery{Messages: []bot.Message{}}
 	for _, entry := range in.Entry {
 		for _, change := range entry.Changes {
 			if change.Field != fieldMessages {
@@ -72,12 +89,32 @@ func (w *Webhook) Parse(body []byte) ([]bot.Message, error) {
 			}
 			for _, m := range change.Value.Messages {
 				if msg, ok := m.toBot(); ok {
-					messages = append(messages, msg)
+					out.Messages = append(out.Messages, msg)
 				}
+			}
+			for _, s := range change.Value.Statuses {
+				out.Statuses = append(out.Statuses, s.toBot())
 			}
 		}
 	}
-	return messages, nil
+	return out, nil
+}
+
+func (s status) toBot() bot.Status {
+	out := bot.Status{
+		MessageID: s.ID,
+		Recipient: s.RecipientID,
+		Status:    s.Status,
+	}
+	for _, e := range s.Errors {
+		out.Errors = append(out.Errors, bot.StatusError{
+			Code:    e.Code,
+			Title:   e.Title,
+			Message: e.Message,
+			Details: e.ErrorData.Details,
+		})
+	}
+	return out
 }
 
 // toBot reports false for anything with neither words nor a tap in it.

@@ -181,8 +181,25 @@ func (m *Messenger) send(ctx context.Context, body map[string]any) error {
 		return fmt.Errorf("whatsapp refused the message: %s: %s", res.Status, bytes.TrimSpace(detail))
 	}
 
-	// Draining what is left lets the connection be reused.
-	_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 4096))
+	// A 2xx means Meta accepted the message, not that it arrived. The
+	// id it hands back is the only thing that ties this send to the
+	// delivery status that comes later on the webhook, so it is worth
+	// a line even on the happy path.
+	accepted, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
+	var ack struct {
+		Messages []struct {
+			ID     string `json:"id"`
+			Status string `json:"message_status"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(accepted, &ack); err != nil || len(ack.Messages) == 0 {
+		slog.Info("whatsapp accepted the message", "type", body["type"])
+		return nil
+	}
+	slog.Info("whatsapp accepted the message",
+		"type", body["type"],
+		"whatsapp_message_id", ack.Messages[0].ID,
+		"status", ack.Messages[0].Status)
 	return nil
 }
 

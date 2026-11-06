@@ -20,6 +20,7 @@ type fakeWebhook struct {
 	verifyErr error
 	parseErr  error
 	messages  []bot.Message
+	statuses  []bot.Status
 
 	verified bool
 	parsed   bool
@@ -37,9 +38,12 @@ func (w *fakeWebhook) Verify(*http.Request, []byte) error {
 	return w.verifyErr
 }
 
-func (w *fakeWebhook) Parse([]byte) ([]bot.Message, error) {
+func (w *fakeWebhook) Parse([]byte) (bot.Delivery, error) {
 	w.parsed = true
-	return w.messages, w.parseErr
+	if w.parseErr != nil {
+		return bot.Delivery{}, w.parseErr
+	}
+	return bot.Delivery{Messages: w.messages, Statuses: w.statuses}, nil
 }
 
 // fakeBot records what it was handed, and a test waits on it instead of
