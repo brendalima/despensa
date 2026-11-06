@@ -176,7 +176,7 @@ func TestAnOwedDigestRidesOutOnTheNextMessage(t *testing.T) {
 	if h.messenger.sent[0].text != "beleza" {
 		t.Errorf("the first message was not the answer: %q", h.messenger.sent[0].text)
 	}
-	if !strings.Contains(h.messenger.sent[1].text, "Lista da semana") {
+	if !strings.Contains(h.messenger.sent[1].text, "Resumo semanal da despensa") {
 		t.Errorf("the second message was not the digest: %q", h.messenger.sent[1].text)
 	}
 	if len(h.digests.paid) != 1 {

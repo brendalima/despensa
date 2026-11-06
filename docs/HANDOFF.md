@@ -292,7 +292,7 @@ The digest needs two things that are not code, and they are independent of each 
        "parameter_format": "POSITIONAL",
        "components": [{
          "type": "BODY",
-         "text": "Lista de compras da semana: {{1}}. Me diga o que você comprou para eu atualizar a despensa.",
+         "text": "Resumo semanal da sua despensa. Itens em falta: {{1}}",
          "example": {"body_text": [["arroz — restam 540 g (≈2,5 conchas); papel toalha"]]}
        }]
      }'
@@ -305,7 +305,17 @@ The digest needs two things that are not code, and they are independent of each 
    - **Exactly one body parameter.** The code sends the whole list as `{{1}}`, on one line.
    - **The body sentence lives at Meta, not here.** Changing its wording needs no deploy — only the parameter comes from this repo. Keep it roughly in step with `humanize.Digest`, which is what the fallback sends in the chat.
 
-   The body deliberately carries more than `Lista da semana: {{1}}` would. A utility template whose body is almost entirely a variable is a common rejection, and this one also has to read as a service message about the person's own pantry rather than marketing.
+   **The wording is load-bearing, and it was chosen against Meta's categorization guidelines** (read on 2026-11-06, <https://developers.facebook.com/documentation/business-messaging/whatsapp/templates/template-categorization>). A UTILITY template must meet **both** criteria: non-promotional, **and** "specific to or requested by the user (clearly related to their order, account, services, or transactions)". A pantry digest is the second one — Meta lists **"Account Alerts or Updates"** as a utility objective outright — so the category is right and the only job is not tripping the marketing triggers. Three of them apply here:
+
+   - **A call to action is marketing.** Meta's marketing examples list "calls to action", and add "These are marketing even if requested by users." So no *"me diga o que você comprou"* on the end, however useful it would be. An earlier draft of this template had exactly that and it was the riskiest thing in it.
+   - **An unclear body is marketing.** Meta classifies "Templates where contents are unclear (for example, where contents are only `{{1}}`)" as marketing, so a bare `Lista da semana: {{1}}` is its own problem. The body has to be a real sentence.
+   - **Purchase vocabulary buys nothing.** "Lista de compras" is the person's own list, not an offer, but "compras" brushes against sales language for no gain. "Resumo semanal da sua despensa" instead names it as a recurring update about their own data, which is the utility case stated out loud.
+
+   `humanize.Digest` was reworded to match, because the template and the in-chat fallback are the same message and the person should not be able to tell which path it took. There is a test that fails if either drifts back towards marketing wording.
+
+   **Getting the category wrong costs money, it does not block.** "If you selected `UTILITY` as the template's category and WhatsApp determined it should be `MARKETING`, the template is approved as `MARKETING`" — it still sends, at marketing pricing, and becomes subject to a per-user marketing frequency cap (error `131049`, which Meta describes as adaptive and never puts a number on). A category decision can be appealed afterwards, but only through WhatsApp Manager's Business Support flow, not the API.
+
+   Do **not** bother with `allow_category_change`: Meta made that the default on 2025-04-09, and the field is now redundant.
 
    Review is automatic on creation and takes up to 24 hours. Check it without the UI:
 

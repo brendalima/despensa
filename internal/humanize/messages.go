@@ -73,14 +73,21 @@ func ShoppingList(l domain.ShoppingList) string {
 }
 
 // Digest is the weekly list as it arrives in the chat, which is where
-// it lands whenever there is no approved template to send it as. The
-// header says what week it is talking about, because unlike every other
-// message the bot sends, nobody asked for this one.
+// it lands whenever there is no approved template to send it as.
+//
+// It says what it is before it says anything else, because unlike every
+// other message the bot sends, nobody asked for this one. The wording
+// deliberately matches the approved template's: the two channels are
+// the same message, and the person should not be able to tell which
+// path it took. It also avoids "lista de compras" and anything that
+// reads as a call to action — Meta classifies both as marketing, and
+// this is an update about the person's own pantry.
 func Digest(l domain.ShoppingList) string {
 	if l.Empty() {
-		return "Lista da semana: não está faltando nada."
+		return "Resumo semanal da despensa: não está faltando nada."
 	}
-	return "Lista da semana:\n• " + strings.Join(listEntries(l), "\n• ")
+	return "Resumo semanal da despensa. Itens em falta:\n• " +
+		strings.Join(listEntries(l), "\n• ")
 }
 
 // digestParamLimit is Meta's documented cap on a template's body text:

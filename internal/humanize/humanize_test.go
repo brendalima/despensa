@@ -320,8 +320,15 @@ func TestDigest(t *testing.T) {
 		Low:   []domain.Item{low},
 		Notes: []domain.Note{{Text: "fermento"}},
 	})
-	if !strings.HasPrefix(got, "Lista da semana:") {
-		t.Errorf("Digest() =\n%s\nwant it to say which week it is", got)
+	if !strings.HasPrefix(got, "Resumo semanal da despensa") {
+		t.Errorf("Digest() =\n%s\nwant it to say what it is first", got)
+	}
+	// Meta reads "lista de compras" and a call to action as marketing,
+	// and the fallback is the same message as the template.
+	for _, promotional := range []string{"lista de compras", "Me diga", "compre"} {
+		if strings.Contains(got, promotional) {
+			t.Errorf("Digest() =\n%s\nreads as marketing: %q", got, promotional)
+		}
 	}
 	if !strings.Contains(got, "arroz — restam 500 g") {
 		t.Errorf("Digest() =\n%s\nwant the item with what is left", got)
