@@ -241,6 +241,20 @@ func (b *Bot) converse(ctx context.Context, msg Message, done *outcome) error {
 			b.remember(ctx, msg.ChatID, fresh)
 			return err
 		}
+
+		// Checked before the turn is kept, and that order is the whole
+		// point. A truncated turn is half of something: running a tool
+		// call whose arguments stop mid-array could write the wrong
+		// thing, and keeping an assistant tool_use that never gets a
+		// tool_result makes the next request invalid for this chat
+		// until the window forgets it. So it is neither run nor
+		// stored, and the turn ends with what the ledger already has.
+		if reply.Truncated {
+			slog.Error("the model's turn was cut off at the token ceiling",
+				"message_id", msg.ID, "iteration", i+1, "tool_calls", len(reply.ToolCalls))
+			break
+		}
+
 		turns = append(turns, reply)
 		fresh = append(fresh, reply)
 

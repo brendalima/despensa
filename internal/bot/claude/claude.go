@@ -21,10 +21,24 @@ import (
 var _ bot.Model = (*Client)(nil)
 
 const (
-	// maxTokens is the shape of the answer, not a budget: a receipt is
-	// one or two sentences, and anything longer is the model losing the
-	// thread rather than being thorough.
-	maxTokens = 1024
+	// maxTokens has to fit the largest honest turn, which is not the
+	// receipt. It bounds thinking, the tool-call JSON and the text
+	// together — and one sentence listing a whole pantry produces an
+	// entries array with a new_item block per line, thousands of
+	// tokens before a word of Portuguese is written.
+	//
+	// It was 1024, reasoned about as "a receipt is one or two
+	// sentences". A ten-item inventory then truncated the tool call
+	// mid-array, five times: the arguments arrived as {} and the
+	// schema refused them for "missing properties: [entries]", which
+	// reads like a confused model and is a token ceiling. Retrying
+	// cannot help, because the next attempt truncates in the same
+	// place.
+	//
+	// The cap is a stop on a runaway, not the cost control — effort
+	// and the iteration limit are that, and a normal receipt still
+	// costs a fraction of this.
+	maxTokens = 8192
 
 	// Low effort, deliberately. The judgement that matters here is
 	// "how much is a cup of rice", which is recall, not reasoning; the
@@ -138,7 +152,18 @@ func (c *Client) Reply(ctx context.Context, req bot.Request) (bot.Turn, error) {
 		return bot.Turn{}, fmt.Errorf("the model declined to answer: %s", answer.StopDetails.Category)
 	}
 
-	return turnOf(answer)
+	turn, err := turnOf(answer)
+	if err != nil {
+		return bot.Turn{}, err
+	}
+
+	// Cut off at the ceiling. Whatever is in this turn is half of
+	// something — a tool call missing most of its arguments reads as a
+	// schema error, and the loop would spend its whole budget retrying
+	// a call that truncates in the same place every time. The caller
+	// needs to know the difference.
+	turn.Truncated = answer.StopReason == anthropic.BetaStopReasonMaxTokens
+	return turn, nil
 }
 
 // turnOf keeps both halves: the fields the loop reads, and the exact
