@@ -69,25 +69,70 @@ func ShoppingList(l domain.ShoppingList) string {
 	if l.Empty() {
 		return "Não está faltando nada."
 	}
+	return "Lista de compras:\n• " + strings.Join(listEntries(l), "\n• ")
+}
 
-	var b strings.Builder
-	b.WriteString("Lista de compras:")
+// Digest is the weekly list as it arrives in the chat, which is where
+// it lands whenever there is no approved template to send it as. The
+// header says what week it is talking about, because unlike every other
+// message the bot sends, nobody asked for this one.
+func Digest(l domain.ShoppingList) string {
+	if l.Empty() {
+		return "Lista da semana: não está faltando nada."
+	}
+	return "Lista da semana:\n• " + strings.Join(listEntries(l), "\n• ")
+}
+
+// digestParamLimit is Meta's documented cap on a template's body text:
+// 1024 characters for the template itself. The cap on a send-time
+// parameter is not documented at all, so the body's stands in for it.
+const digestParamLimit = 1024
+
+// DigestLine is the list as the one parameter of an approved template.
+//
+// It is a single line on purpose. A template parameter is substituted
+// into a sentence the template already owns, so a newline in it would
+// break that sentence rather than lay out a list. Meta is also widely
+// reported to refuse parameters holding newlines or runs of whitespace,
+// which their current documentation neither states nor denies — this
+// does not depend on which it is.
+func DigestLine(l domain.ShoppingList) string {
+	if l.Empty() {
+		return "nada faltando"
+	}
+	return clip(oneLine(strings.Join(listEntries(l), "; ")), digestParamLimit)
+}
+
+// listEntries is one line per thing to buy, shared by every rendering
+// of the list so the chat and the digest cannot word it differently.
+func listEntries(l domain.ShoppingList) []string {
+	entries := make([]string, 0, len(l.Low)+len(l.Notes))
 	for _, item := range l.Low {
-		b.WriteString("\n• ")
-		b.WriteString(item.Name)
-		b.WriteString(" — ")
 		if item.Drifted() {
-			b.WriteString("acabou (ou minha conta se perdeu)")
+			entries = append(entries, item.Name+" — acabou (ou minha conta se perdeu)")
 			continue
 		}
-		b.WriteString("restam ")
-		b.WriteString(Level(item, item.OnHand))
+		entries = append(entries, item.Name+" — restam "+Level(item, item.OnHand))
 	}
 	for _, note := range l.Notes {
-		b.WriteString("\n• ")
-		b.WriteString(note.Text)
+		entries = append(entries, note.Text)
 	}
-	return b.String()
+	return entries
+}
+
+// oneLine collapses every run of whitespace, newlines included, into a
+// single space. An item's name is the person's own text, so it can hold
+// anything they typed.
+func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// clip cuts at a rune boundary and says it was cut. A list long enough
+// to need this is a shopping trip nobody is doing in one go anyway.
+func clip(s string, limit int) string {
+	runes := []rune(s)
+	if len(runes) <= limit {
+		return s
+	}
+	return string(runes[:limit-1]) + "…"
 }
 
 // Item renders one line of the pantry.

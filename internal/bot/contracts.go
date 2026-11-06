@@ -64,3 +64,13 @@ type Chat interface {
 type Handler interface {
 	Handle(ctx context.Context, msg Message)
 }
+
+// Digests is the slice of the digest service the weekly message uses.
+// Declared here for the same reason Chat is: the bot owns the shape it
+// depends on, and services.Digest satisfies it without knowing.
+type Digests interface {
+	List(ctx context.Context) (domain.ShoppingList, error)
+	Owe(ctx context.Context, chatID string) (bool, error)
+	Owed(ctx context.Context, chatID string) (domain.Digest, bool, error)
+	Paid(ctx context.Context, id int64) error
+}

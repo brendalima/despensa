@@ -309,3 +309,77 @@ func TestError(t *testing.T) {
 		})
 	}
 }
+
+// The digest is the only message nobody asked for, so it says what it
+// is before it says anything else.
+func TestDigest(t *testing.T) {
+	low := rice()
+	low.OnHand = 500 * domain.Thousand
+
+	got := humanize.Digest(domain.ShoppingList{
+		Low:   []domain.Item{low},
+		Notes: []domain.Note{{Text: "fermento"}},
+	})
+	if !strings.HasPrefix(got, "Lista da semana:") {
+		t.Errorf("Digest() =\n%s\nwant it to say which week it is", got)
+	}
+	if !strings.Contains(got, "arroz — restam 500 g") {
+		t.Errorf("Digest() =\n%s\nwant the item with what is left", got)
+	}
+	if !strings.Contains(got, "• fermento") {
+		t.Errorf("Digest() =\n%s\nwant the note", got)
+	}
+}
+
+// A template parameter is substituted into a sentence the template
+// already owns, so it has to be one line however the person wrote the
+// name of what they want.
+func TestDigestLineIsOneLine(t *testing.T) {
+	low := rice()
+	low.OnHand = 500 * domain.Thousand
+
+	got := humanize.DigestLine(domain.ShoppingList{
+		Low:   []domain.Item{low},
+		Notes: []domain.Note{{Text: "papel\ttoalha\ne  fermento"}},
+	})
+	if strings.ContainsAny(got, "\n\r\t") {
+		t.Errorf("DigestLine() = %q, want no newlines or tabs", got)
+	}
+	if strings.Contains(got, "  ") {
+		t.Errorf("DigestLine() = %q, want no runs of spaces", got)
+	}
+	for _, want := range []string{"arroz", "500 g", "papel toalha", "fermento"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("DigestLine() = %q, want it to contain %q", got, want)
+		}
+	}
+}
+
+// Meta documents 1024 characters for a template's body, and nothing at
+// all about a parameter, so the body's cap is the safe assumption.
+func TestDigestLineIsClippedToMetasLimit(t *testing.T) {
+	notes := make([]domain.Note, 0, 200)
+	for i := range 200 {
+		notes = append(notes, domain.Note{ID: int64(i), Text: "uma coisa com nome comprido para comprar"})
+	}
+
+	got := humanize.DigestLine(domain.ShoppingList{Notes: notes})
+	if n := len([]rune(got)); n > 1024 {
+		t.Errorf("DigestLine() is %d runes, want at most 1024", n)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("DigestLine() = %q, want it to say it was cut", got)
+	}
+}
+
+// An empty list never reaches a template — the sender skips it — but
+// the parameter still has to be a non-empty string: Meta refuses a
+// template whose parameter is blank.
+func TestDigestWithNothingMissing(t *testing.T) {
+	if got := humanize.DigestLine(domain.ShoppingList{}); got == "" {
+		t.Error("DigestLine() is empty, which Meta refuses")
+	}
+	if got := humanize.Digest(domain.ShoppingList{}); !strings.Contains(got, "faltando nada") {
+		t.Errorf("Digest() = %q, want it to say nothing is missing", got)
+	}
+}

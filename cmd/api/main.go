@@ -28,17 +28,6 @@ import (
 	"github.com/brendalima/despensa/internal/rest"
 )
 
-const (
-	// conversationWindow is how long a sentence stays unfinished: long
-	// enough that "e mais uma taça" still means rice, short enough
-	// that yesterday does not answer today.
-	conversationWindow = 30 * time.Minute
-
-	// conversationLimit caps how many turns one request carries, so an
-	// argument with the bot cannot grow without bound.
-	conversationLimit = 20
-)
-
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 
@@ -66,14 +55,19 @@ func run() error {
 	pRepository := repository.MustNewPantry(db)
 	mRepository := repository.MustNewMessage(db)
 	cRepository := repository.MustNewConversation(db)
+	dRepository := repository.MustNewDigest(db)
 	hRepository := repository.MustNewHealth(db)
 
 	pService := services.MustNewPantry(pRepository)
+	dService := services.MustNewDigest(services.DigestInput{
+		Pantry:  pService,
+		Digests: dRepository,
+	})
 	cService := services.MustNewChat(services.ChatInput{
 		Messages:      mRepository,
 		Conversations: cRepository,
-		Window:        conversationWindow,
-		Limit:         conversationLimit,
+		Window:        services.DefaultConversationWindow,
+		Limit:         services.DefaultConversationLimit,
 	})
 
 	tools := agent.MustNew(pService, domain.SourceWhatsApp)
@@ -92,6 +86,7 @@ func run() error {
 		Model:          model,
 		Messenger:      messenger,
 		Chat:           cService,
+		Digests:        dService,
 		AllowedNumbers: cfg.WhatsApp.AllowedNumbers,
 		MaxIterations:  cfg.Anthropic.MaxToolIterations,
 	})

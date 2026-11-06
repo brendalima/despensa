@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/brendalima/despensa/internal/agent"
 	"github.com/brendalima/despensa/internal/bot"
@@ -23,6 +24,7 @@ const (
 // the reason the ports live in the bot package.
 var (
 	_ bot.Chat     = (*services.Chat)(nil)
+	_ bot.Digests  = (*services.Digest)(nil)
 	_ agent.Pantry = (*services.Pantry)(nil)
 )
 
@@ -181,6 +183,59 @@ func (c *fakeChat) Remember(_ context.Context, chatID string, role domain.TurnRo
 	return nil
 }
 
+// fakeDigests is the weekly digest's debt book. It counts the reads as
+// well as the writes, because "a stranger's message costs nothing"
+// means nothing is read either.
+type fakeDigests struct {
+	list domain.ShoppingList
+
+	owed   map[string]domain.Digest
+	nextID int64
+
+	reads int
+	owes  []string
+	paid  []int64
+
+	owedErr error
+}
+
+func newFakeDigests() *fakeDigests {
+	return &fakeDigests{owed: map[string]domain.Digest{}}
+}
+
+func (d *fakeDigests) List(context.Context) (domain.ShoppingList, error) {
+	return d.list, nil
+}
+
+func (d *fakeDigests) Owe(_ context.Context, chatID string) (bool, error) {
+	d.owes = append(d.owes, chatID)
+	if _, already := d.owed[chatID]; already {
+		return false, nil
+	}
+	d.nextID++
+	d.owed[chatID] = domain.Digest{ID: d.nextID, ChatID: chatID, DueAt: time.Now()}
+	return true, nil
+}
+
+func (d *fakeDigests) Owed(_ context.Context, chatID string) (domain.Digest, bool, error) {
+	d.reads++
+	if d.owedErr != nil {
+		return domain.Digest{}, false, d.owedErr
+	}
+	digest, ok := d.owed[chatID]
+	return digest, ok, nil
+}
+
+func (d *fakeDigests) Paid(_ context.Context, id int64) error {
+	d.paid = append(d.paid, id)
+	for chatID, digest := range d.owed {
+		if digest.ID == id {
+			delete(d.owed, chatID)
+		}
+	}
+	return nil
+}
+
 // harness wires the real tools and the fakes together.
 type harness struct {
 	bot       *bot.Bot
@@ -188,6 +243,7 @@ type harness struct {
 	model     *fakeModel
 	messenger *fakeMessenger
 	chat      *fakeChat
+	digests   *fakeDigests
 }
 
 func newHarness(t *testing.T, replies ...bot.Turn) *harness {
@@ -198,6 +254,7 @@ func newHarness(t *testing.T, replies ...bot.Turn) *harness {
 		model:     &fakeModel{replies: replies},
 		messenger: &fakeMessenger{},
 		chat:      newFakeChat(),
+		digests:   newFakeDigests(),
 	}
 
 	b, err := bot.New(bot.Input{
@@ -205,6 +262,7 @@ func newHarness(t *testing.T, replies ...bot.Turn) *harness {
 		Model:          h.model,
 		Messenger:      h.messenger,
 		Chat:           h.chat,
+		Digests:        h.digests,
 		AllowedNumbers: []string{"+55 11 99999-0000"},
 		MaxIterations:  3,
 	})
