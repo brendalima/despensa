@@ -133,6 +133,15 @@ func TestPlural(t *testing.T) {
 		"barril":   "barris",
 		"colheres": "colheres",
 		"":         "",
+
+		// An abbreviation does not inflect. "ovo: 0 uns -> 20 uns" was a
+		// real receipt: every piece-counted item whose unit portion is
+		// called "un" renders through here, so this is all of them.
+		"un": "un",
+		"g":  "g",
+		"kg": "kg",
+		"ml": "ml",
+		"l":  "l",
 	}
 	for in, want := range tests {
 		if got := humanize.Plural(in); got != want {

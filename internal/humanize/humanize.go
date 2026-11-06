@@ -78,9 +78,23 @@ func Count(q domain.Qty, word string) string {
 
 // irregular holds what the rules below get wrong. A bad plural in a
 // receipt is the small wrongness that makes a bot feel broken.
+//
+// The abbreviations map to themselves because an abbreviation does not
+// inflect: "20 un", never "20 uns". That one is not hypothetical — the
+// model created an egg with a portion called "un" and the first real
+// receipt read "ovo: 0 uns → 20 uns". Any item counted in pieces whose
+// unit portion is named "un" renders through here, so it is every such
+// item, not an edge case.
 var irregular = map[string]string{
 	"pão": "pães",
 	"mão": "mãos",
+
+	"un": "un",
+	"g":  "g",
+	"kg": "kg",
+	"mg": "mg",
+	"ml": "ml",
+	"l":  "l",
 }
 
 // Plural inflects a Portuguese noun. The person invents these words, so
