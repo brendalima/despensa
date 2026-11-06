@@ -16,6 +16,7 @@ const (
 	riceID = "11111111-1111-1111-1111-111111111111"
 
 	mine      = "5511999990000"
+	spouse    = "5521988887777"
 	stranger  = "5511888880000"
 	messageID = "wamid.1"
 )
@@ -187,6 +188,10 @@ type fakeChat struct {
 
 	remembered []domain.Turn
 	claims     int
+
+	// historyFor records which chat each read was for, so a test can
+	// tell that two phones are two conversations.
+	historyFor []string
 }
 
 func newFakeChat() *fakeChat { return &fakeChat{claimed: map[string]bool{}} }
@@ -201,7 +206,8 @@ func (c *fakeChat) Claim(_ context.Context, provider, messageID string) (bool, e
 	return true, nil
 }
 
-func (c *fakeChat) History(context.Context, string) ([]domain.Turn, error) {
+func (c *fakeChat) History(_ context.Context, chatID string) ([]domain.Turn, error) {
+	c.historyFor = append(c.historyFor, chatID)
 	return c.history, nil
 }
 
@@ -303,6 +309,51 @@ func newHarness(t *testing.T, replies ...bot.Turn) *harness {
 // recorded is what reached the pantry, so a test can assert that the
 // writes happened before asserting what the person was told about them.
 func (h *harness) recorded() []domain.EventInput { return h.pantry.recorded }
+
+// newHouseholdHarness allows two numbers rather than one. The allowed
+// list is the security of this service and it had no test with more
+// than one entry in it, which is the shape every household but the
+// first one has.
+func newHouseholdHarness(t *testing.T, replies ...bot.Turn) *harness {
+	t.Helper()
+
+	h := &harness{
+		pantry:    &fakePantry{},
+		model:     &fakeModel{replies: replies},
+		messenger: &fakeMessenger{},
+		chat:      newFakeChat(),
+		digests:   newFakeDigests(),
+	}
+
+	b, err := bot.New(bot.Input{
+		Tools:     agent.MustNew(h.pantry, domain.SourceWhatsApp),
+		Model:     h.model,
+		Messenger: h.messenger,
+		Chat:      h.chat,
+		Digests:   h.digests,
+		// Written the way a person writes them into configuration,
+		// because only the digits are compared.
+		AllowedNumbers: []string{"+55 11 99999-0000", " +55 (21) 98888-7777 "},
+		MaxIterations:  3,
+	})
+	if err != nil {
+		t.Fatalf("couldn't create the bot: %v", err)
+	}
+	h.bot = b
+	return h
+}
+
+// from is a message from one number, with its own id so the claim does
+// not treat it as a redelivery of another.
+func from(number, id, body string) bot.Message {
+	return bot.Message{
+		Provider: domain.SourceWhatsApp,
+		ID:       id,
+		ChatID:   number,
+		From:     number,
+		Text:     body,
+	}
+}
 
 func text(body string) bot.Message {
 	return bot.Message{

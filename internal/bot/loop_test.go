@@ -354,3 +354,86 @@ func TestATruncatedTurnIsNeitherRunNorStored(t *testing.T) {
 		t.Errorf("answer = %q, want GotLost()", got)
 	}
 }
+
+// A household is more than one phone. Everyone on the list writes to
+// the same pantry, and nobody off it does.
+func TestEveryNumberOnTheListIsLetIn(t *testing.T) {
+	use := func(qty string) bot.Turn {
+		return toolCall(agent.ToolRecordEvents,
+			`{"entries":[{"kind":"consume","portion_name":"taça","portion_qty":`+qty+`,"item_id":"`+riceID+`"}]}`)
+	}
+	h := newHouseholdHarness(t, use("1"), answer("anotado"), use("2"), answer("anotado"))
+	ctx := context.Background()
+
+	h.bot.Handle(ctx, from(mine, "wamid.her", "usei uma taça de arroz"))
+	h.bot.Handle(ctx, from(spouse, "wamid.his", "usei duas taças de arroz"))
+
+	if len(h.recorded()) != 2 {
+		t.Fatalf("the pantry took %d writes, want one from each phone", len(h.recorded()))
+	}
+	if h.model.calls() != 4 {
+		t.Errorf("%d model calls, want a tool round trip per message", h.model.calls())
+	}
+	for _, sent := range h.messenger.sent {
+		if sent.text == humanize.NotForYou() {
+			t.Error("someone on the list was turned away")
+		}
+	}
+}
+
+// Adding a second phone must not open the door. The guard is the only
+// thing between a stranger and the household's pantry.
+func TestAStrangerIsStillRefusedWithTwoNumbersAllowed(t *testing.T) {
+	h := newHouseholdHarness(t)
+
+	h.bot.Handle(context.Background(), from(stranger, "wamid.them", "usei uma taça de arroz"))
+
+	if h.model.calls() != 0 {
+		t.Errorf("a stranger cost %d model calls", h.model.calls())
+	}
+	if len(h.recorded()) != 0 {
+		t.Errorf("a stranger wrote to the pantry: %+v", h.recorded())
+	}
+	if got := h.messenger.last(t).text; got != humanize.NotForYou() {
+		t.Errorf("answer = %q, want the neutral refusal", got)
+	}
+}
+
+// Two people talking at once are two conversations. "e mais uma taça"
+// from one of them must not be answered with the other's rice.
+func TestEachPhoneHasItsOwnHistory(t *testing.T) {
+	h := newHouseholdHarness(t, answer("anotado"), answer("anotado"))
+	ctx := context.Background()
+
+	h.bot.Handle(ctx, from(mine, "wamid.her", "usei uma taça de arroz"))
+	h.bot.Handle(ctx, from(spouse, "wamid.his", "e mais uma"))
+
+	for _, turn := range h.chat.remembered {
+		if turn.ChatID != mine && turn.ChatID != spouse {
+			t.Errorf("a turn was stored against %q", turn.ChatID)
+		}
+	}
+	// The second message's request must not carry the first person's
+	// turns: the fake chat keys history by nothing, so what this pins
+	// is that the bot asked for the history of the chat it answered.
+	if len(h.chat.historyFor) != 2 {
+		t.Fatalf("history was read for %v, want one read per chat", h.chat.historyFor)
+	}
+	if h.chat.historyFor[0] != mine || h.chat.historyFor[1] != spouse {
+		t.Errorf("history read for %v, want [%s %s]", h.chat.historyFor, mine, spouse)
+	}
+}
+
+// normalizeNumber is unit-tested elsewhere; this is about the list.
+// Every entry has to be normalised, not just the first: the spouse's
+// number is written into the configuration with spaces, brackets and a
+// stray space at each end, and WhatsApp sends bare digits.
+func TestEveryEntryInTheListIsNormalised(t *testing.T) {
+	h := newHouseholdHarness(t, answer("anotado"))
+
+	h.bot.Handle(context.Background(), from("5521988887777", "wamid.his", "usei uma taça de arroz"))
+
+	if got := h.messenger.last(t).text; got == humanize.NotForYou() {
+		t.Error("a number written with spaces and punctuation in the configuration was not matched")
+	}
+}
