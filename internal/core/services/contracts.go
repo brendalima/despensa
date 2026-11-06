@@ -50,3 +50,22 @@ type ChatService interface {
 	// Forget drops the turns that fell out of the window.
 	Forget(ctx context.Context) (int64, error)
 }
+
+// DigestService is the weekly list and the debt behind it. The digest
+// is the only message this service starts, and outside WhatsApp's
+// 24-hour window Meta accepts nothing but an approved template — so a
+// digest that cannot be sent is owed, and paid on the next turn.
+type DigestService interface {
+	// List is the week's list, derived now rather than stored, so a
+	// late digest still says what the pantry holds today.
+	List(ctx context.Context) (domain.ShoppingList, error)
+
+	// Owe records a digest that could not be sent. A second call while
+	// the first is unpaid writes nothing: the list is the same list.
+	Owe(ctx context.Context, chatID string) (bool, error)
+
+	Owed(ctx context.Context, chatID string) (domain.Digest, bool, error)
+
+	// Paid settles a debt, after the message is away and never before.
+	Paid(ctx context.Context, id int64) error
+}
