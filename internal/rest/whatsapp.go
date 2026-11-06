@@ -87,7 +87,7 @@ func (h *WhatsApp) Receive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	messages, err := h.webhook.Parse(body)
+	delivery, err := h.webhook.Parse(body)
 	if err != nil {
 		// A payload that cannot be read will not read any better on
 		// the next attempt, so this is a 200 and a log, not a retry.
@@ -96,7 +96,29 @@ func (h *WhatsApp) Receive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for _, msg := range messages {
+	// A delivery report costs nothing and answers the only question a
+	// send cannot: a 2xx from Meta means accepted, and "failed" shows
+	// up here or nowhere.
+	for _, status := range delivery.Statuses {
+		if len(status.Errors) == 0 {
+			slog.Info("delivery status",
+				"whatsapp_message_id", status.MessageID,
+				"recipient", status.Recipient,
+				"status", status.Status)
+			continue
+		}
+		for _, e := range status.Errors {
+			slog.Error("whatsapp could not deliver the message",
+				"whatsapp_message_id", status.MessageID,
+				"recipient", status.Recipient,
+				"status", status.Status,
+				"code", e.Code,
+				"title", e.Title,
+				"detail", e.Details)
+		}
+	}
+
+	for _, msg := range delivery.Messages {
 		h.inFlight.Add(1)
 		go func() {
 			defer h.inFlight.Done()

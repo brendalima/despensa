@@ -98,3 +98,30 @@ type ToolResult struct {
 }
 
 func (t Turn) wantsTools() bool { return len(t.ToolCalls) > 0 }
+
+// Status is a delivery report. WhatsApp answers a send with an id and
+// nothing more; whether the message reached the phone, failed, or was
+// read arrives later on the same webhook, under the same field. It is
+// the only account of what happened after Meta said "accepted", so it
+// is parsed and logged even though nothing acts on it.
+type Status struct {
+	MessageID string
+	Recipient string
+	Status    string
+	Errors    []StatusError
+}
+
+// StatusError is why a delivery failed, in Meta's own words.
+type StatusError struct {
+	Code    int
+	Title   string
+	Message string
+	Details string
+}
+
+// Delivery is one webhook call: the messages to act on and the
+// delivery reports to record.
+type Delivery struct {
+	Messages []Message
+	Statuses []Status
+}

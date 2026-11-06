@@ -136,10 +136,11 @@ func TestParseReadsWhatCanBeActedOn(t *testing.T) {
 	  }]
 	}`)
 
-	messages, err := w.Parse(body)
+	delivery, err := w.Parse(body)
 	if err != nil {
 		t.Fatalf("couldn't parse the payload: %v", err)
 	}
+	messages := delivery.Messages
 	if len(messages) != 3 {
 		t.Fatalf("parsed %d messages, want 3: %+v", len(messages), messages)
 	}
@@ -173,12 +174,59 @@ func TestParseRefusesRubbish(t *testing.T) {
 		t.Error("Parse accepted something that is not JSON")
 	}
 
-	messages, err := w.Parse([]byte(`{"entry":[]}`))
+	empty, err := w.Parse([]byte(`{"entry":[]}`))
 	if err != nil {
 		t.Fatalf("couldn't parse an empty delivery: %v", err)
 	}
-	if len(messages) != 0 {
-		t.Errorf("an empty delivery produced %d messages", len(messages))
+	if len(empty.Messages) != 0 {
+		t.Errorf("an empty delivery produced %d messages", len(empty.Messages))
+	}
+	if len(empty.Statuses) != 0 {
+		t.Errorf("an empty delivery produced %d statuses", len(empty.Statuses))
+	}
+}
+
+// A delivery report is the only account of what happened after Meta
+// answered "accepted", so a failed one has to survive the parse with
+// its reason intact.
+func TestParseReadsDeliveryStatuses(t *testing.T) {
+	w := newWebhook(t)
+
+	body := []byte(`{
+	  "entry": [{"id": "1", "changes": [
+	    {"field": "messages", "value": {"statuses": [
+	      {"id": "wamid.a", "recipient_id": "5511999990000", "status": "delivered"},
+	      {"id": "wamid.b", "recipient_id": "5511999990000", "status": "failed",
+	       "errors": [{"code": 131030, "title": "Recipient not allowed",
+	                   "error_data": {"details": "add the number to the list"}}]}
+	    ]}},
+	    {"field": "message_template_status_update", "value": {"statuses": [
+	      {"id": "wamid.c", "status": "delivered"}
+	    ]}}
+	  ]}]
+	}`)
+
+	delivery, err := w.Parse(body)
+	if err != nil {
+		t.Fatalf("couldn't parse the payload: %v", err)
+	}
+	if len(delivery.Statuses) != 2 {
+		t.Fatalf("parsed %d statuses, want 2: %+v", len(delivery.Statuses), delivery.Statuses)
+	}
+
+	if got := delivery.Statuses[0]; got.MessageID != "wamid.a" || got.Status != "delivered" || len(got.Errors) != 0 {
+		t.Errorf("the delivered status read as %+v", got)
+	}
+
+	failed := delivery.Statuses[1]
+	if failed.Status != "failed" || failed.Recipient != "5511999990000" {
+		t.Errorf("the failed status read as %+v", failed)
+	}
+	if len(failed.Errors) != 1 {
+		t.Fatalf("the failure carried %d errors, want 1", len(failed.Errors))
+	}
+	if failed.Errors[0].Code != 131030 || failed.Errors[0].Details != "add the number to the list" {
+		t.Errorf("the failure reason read as %+v", failed.Errors[0])
 	}
 }
 

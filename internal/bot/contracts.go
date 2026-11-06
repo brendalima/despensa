@@ -29,7 +29,7 @@ type Webhook interface {
 	// between a webhook and a public write API.
 	Verify(r *http.Request, body []byte) error
 
-	Parse(body []byte) ([]Message, error)
+	Parse(body []byte) (Delivery, error)
 }
 
 // Model is the model, narrowed to what a conversation needs. It is a
