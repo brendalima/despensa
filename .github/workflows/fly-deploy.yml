@@ -1,25 +1,25 @@
 # See https://fly.io/docs/app-guides/continuous-deployment-with-github-actions/
 
 name: Fly Deploy
+# On merge. CI no longer runs on main — it runs on the pull request,
+# against the merge preview — so there is no CI run on this commit to
+# wait for, and a `workflow_run` trigger here would simply never fire.
+#
+# What stops an unvalidated commit from deploying is therefore branch
+# protection, not this file. Without "require a pull request" and
+# "require the CI check", a direct push to main deploys having run no
+# tests at all, release migration included.
 on:
-  # Only after CI has passed on main. Deploying in parallel with the
-  # gate means the gate is decoration: the release command runs the
-  # migration, and a migration is the one thing here that cannot be
-  # rolled back by redeploying.
-  workflow_run:
-    workflows: [CI]
-    branches: [main]
-    types: [completed]
+  push:
+    branches:
+      - main
 jobs:
   deploy:
     name: Deploy app
     runs-on: ubuntu-latest
-    if: github.event.workflow_run.conclusion == 'success'
     concurrency: deploy-group    # optional: ensure only one action runs at a time
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
       - uses: superfly/flyctl-actions/setup-flyctl@master
       - run: flyctl deploy --remote-only
         env:

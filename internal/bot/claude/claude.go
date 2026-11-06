@@ -29,8 +29,40 @@ const (
 	// Low effort, deliberately. The judgement that matters here is
 	// "how much is a cup of rice", which is recall, not reasoning; the
 	// rest is reading a short list and calling one tool.
-	effort = anthropic.OutputConfigEffortLow
+	effort = anthropic.BetaOutputConfigEffortLow
 )
+
+// This adapter is on the beta namespace for one field: block_binding.
+//
+// A thinking block carries a signature bound to the conversation that
+// produced it, and the model refuses a replayed block whose prefix no
+// longer matches — "the block is bound to a different conversation".
+// That is not a hypothetical: the bot replays a 30-minute, 20-turn
+// window of stored turns, and a window is by definition not the whole
+// conversation, so sooner or later the prefix a block was signed
+// against is missing and every later message in that chat fails with a
+// 400. It happened on the second message of a real conversation and the
+// person was told the pantry could not be saved.
+//
+// drop_block makes that survivable: a block whose prefix still matches
+// is replayed as before, and one whose prefix does not is dropped
+// instead of failing the request. Reasoning is lost only where it could
+// not have been valid anyway.
+//
+// It is a safety net, not a diagnosis. Each dropped block is reasoning
+// the model does not get back, so an edit this code makes on purpose is
+// still worth finding and removing.
+var thinking = anthropic.BetaThinkingConfigParamUnion{
+	OfAdaptive: &anthropic.BetaThinkingConfigAdaptiveParam{
+		BlockBinding: anthropic.BetaThinkingBlockBindingParam{
+			PrefixMismatchBehavior: anthropic.BetaThinkingPrefixMismatchBehaviorDropBlock,
+		},
+	},
+}
+
+// betas is the one beta this adapter needs; block_binding is refused
+// without it.
+var betas = []anthropic.AnthropicBeta{anthropic.AnthropicBetaThinkingBindingControls2026_08_01}
 
 type Client struct {
 	api   anthropic.Client
@@ -76,21 +108,24 @@ func MustNew(in Input) *Client {
 	return c
 }
 
-// Reply asks for one turn. Thinking is left unset: the current models
-// think by default and the depth is set through effort.
+// Reply asks for one turn. Thinking is adaptive — which is what the
+// current models do anyway when it is unset — and configured only so
+// that block_binding can be set; the depth comes from effort.
 func (c *Client) Reply(ctx context.Context, req bot.Request) (bot.Turn, error) {
 	messages, err := messagesOf(req.Turns)
 	if err != nil {
 		return bot.Turn{}, err
 	}
 
-	answer, err := c.api.Messages.New(ctx, anthropic.MessageNewParams{
+	answer, err := c.api.Beta.Messages.New(ctx, anthropic.BetaMessageNewParams{
 		Model:        c.model,
 		MaxTokens:    maxTokens,
-		System:       []anthropic.TextBlockParam{{Text: req.System}},
+		Betas:        betas,
+		Thinking:     thinking,
+		System:       []anthropic.BetaTextBlockParam{{Text: req.System}},
 		Tools:        toolsOf(req.Tools),
 		Messages:     messages,
-		OutputConfig: anthropic.OutputConfigParam{Effort: effort},
+		OutputConfig: anthropic.BetaOutputConfigParam{Effort: effort},
 	})
 	if err != nil {
 		return bot.Turn{}, fmt.Errorf("couldn't reach the model: %w", err)
@@ -99,7 +134,7 @@ func (c *Client) Reply(ctx context.Context, req bot.Request) (bot.Turn, error) {
 	// A declined request stops here rather than being retried under a
 	// different wording: a pantry has nothing to argue about, and
 	// pretending otherwise would hide a real problem.
-	if answer.StopReason == anthropic.StopReasonRefusal {
+	if answer.StopReason == anthropic.BetaStopReasonRefusal {
 		return bot.Turn{}, fmt.Errorf("the model declined to answer: %s", answer.StopDetails.Category)
 	}
 
@@ -109,14 +144,14 @@ func (c *Client) Reply(ctx context.Context, req bot.Request) (bot.Turn, error) {
 // turnOf keeps both halves: the fields the loop reads, and the exact
 // message to replay. Thinking blocks are in the raw copy and nowhere
 // else, which is the only way they survive the next request unedited.
-func turnOf(answer *anthropic.Message) (bot.Turn, error) {
+func turnOf(answer *anthropic.BetaMessage) (bot.Turn, error) {
 	turn := bot.Turn{Role: domain.TurnAssistant}
 
 	for _, block := range answer.Content {
 		switch variant := block.AsAny().(type) {
-		case anthropic.TextBlock:
+		case anthropic.BetaTextBlock:
 			turn.Text += variant.Text
-		case anthropic.ToolUseBlock:
+		case anthropic.BetaToolUseBlock:
 			turn.ToolCalls = append(turn.ToolCalls, bot.ToolCall{
 				ID:   variant.ID,
 				Name: variant.Name,
@@ -136,12 +171,12 @@ func turnOf(answer *anthropic.Message) (bot.Turn, error) {
 // messagesOf rebuilds the conversation. An assistant turn is replayed
 // from its raw copy whenever there is one; a user turn is built here,
 // because its content is ours to begin with.
-func messagesOf(turns []bot.Turn) ([]anthropic.MessageParam, error) {
-	messages := make([]anthropic.MessageParam, 0, len(turns))
+func messagesOf(turns []bot.Turn) ([]anthropic.BetaMessageParam, error) {
+	messages := make([]anthropic.BetaMessageParam, 0, len(turns))
 
 	for _, turn := range turns {
 		if len(turn.Raw) > 0 {
-			var message anthropic.MessageParam
+			var message anthropic.BetaMessageParam
 			if err := json.Unmarshal(turn.Raw, &message); err != nil {
 				return nil, fmt.Errorf("couldn't replay a stored turn: %w", err)
 			}
@@ -156,28 +191,37 @@ func messagesOf(turns []bot.Turn) ([]anthropic.MessageParam, error) {
 			continue
 		}
 		if turn.Role == domain.TurnAssistant {
-			messages = append(messages, anthropic.NewAssistantMessage(blocks...))
+			messages = append(messages, newBetaAssistantMessage(blocks...))
 			continue
 		}
-		messages = append(messages, anthropic.NewUserMessage(blocks...))
+		messages = append(messages, anthropic.NewBetaUserMessage(blocks...))
 	}
 	return messages, nil
 }
 
-func blocksOf(turn bot.Turn) []anthropic.ContentBlockParamUnion {
-	var blocks []anthropic.ContentBlockParamUnion
+// newBetaAssistantMessage stands in for a helper the beta namespace
+// does not provide.
+func newBetaAssistantMessage(blocks ...anthropic.BetaContentBlockParamUnion) anthropic.BetaMessageParam {
+	return anthropic.BetaMessageParam{
+		Role:    anthropic.BetaMessageParamRoleAssistant,
+		Content: blocks,
+	}
+}
+
+func blocksOf(turn bot.Turn) []anthropic.BetaContentBlockParamUnion {
+	var blocks []anthropic.BetaContentBlockParamUnion
 
 	// Tool results come first in the turn that answers a tool call, and
 	// all of them go in one message: splitting them teaches the model
 	// to stop asking for more than one tool at a time.
 	for _, result := range turn.ToolResults {
-		blocks = append(blocks, anthropic.NewToolResultBlock(result.CallID, result.Content, result.IsError))
+		blocks = append(blocks, anthropic.NewBetaToolResultBlock(result.CallID, result.Content, result.IsError))
 	}
 	if turn.Text != "" {
-		blocks = append(blocks, anthropic.NewTextBlock(turn.Text))
+		blocks = append(blocks, anthropic.NewBetaTextBlock(turn.Text))
 	}
 	for _, call := range turn.ToolCalls {
-		blocks = append(blocks, anthropic.NewToolUseBlock(call.ID, call.Args, call.Name))
+		blocks = append(blocks, anthropic.NewBetaToolUseBlock(call.ID, call.Args, call.Name))
 	}
 	return blocks
 }
@@ -186,11 +230,11 @@ func blocksOf(turn bot.Turn) []anthropic.ContentBlockParamUnion {
 // single source of what the model is shown and what validates the call,
 // so additionalProperties travels in ExtraFields rather than being
 // restated here.
-func toolsOf(tools []agent.Tool) []anthropic.ToolUnionParam {
-	params := make([]anthropic.ToolUnionParam, 0, len(tools))
+func toolsOf(tools []agent.Tool) []anthropic.BetaToolUnionParam {
+	params := make([]anthropic.BetaToolUnionParam, 0, len(tools))
 
 	for _, tool := range tools {
-		schema := anthropic.ToolInputSchemaParam{ExtraFields: map[string]any{}}
+		schema := anthropic.BetaToolInputSchemaParam{ExtraFields: map[string]any{}}
 		for key, value := range tool.Schema {
 			switch key {
 			case "type":
@@ -204,7 +248,7 @@ func toolsOf(tools []agent.Tool) []anthropic.ToolUnionParam {
 			}
 		}
 
-		params = append(params, anthropic.ToolUnionParam{OfTool: &anthropic.ToolParam{
+		params = append(params, anthropic.BetaToolUnionParam{OfTool: &anthropic.BetaToolParam{
 			Name:        tool.Name,
 			Description: anthropic.String(tool.Description),
 			InputSchema: schema,

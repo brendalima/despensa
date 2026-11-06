@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/brendalima/despensa/internal/agent"
@@ -17,9 +18,10 @@ import (
 // with a canned message, so the whole mapping is exercised without a
 // key and without spending anything.
 type server struct {
-	http  *httptest.Server
-	sent  map[string]any
-	reply string
+	http    *httptest.Server
+	sent    map[string]any
+	headers http.Header
+	reply   string
 }
 
 func newServer(t *testing.T) *server {
@@ -39,6 +41,7 @@ func newServer(t *testing.T) *server {
 		if err := json.Unmarshal(raw, &s.sent); err != nil {
 			t.Errorf("the client sent something that is not JSON: %v", err)
 		}
+		s.headers = r.Header.Clone()
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, s.reply)
 	}))
@@ -107,10 +110,25 @@ func TestReplyAsksTheWayThePlanSays(t *testing.T) {
 		t.Errorf("effort %v, want low", output["effort"])
 	}
 
-	// Thinking is left unset on purpose: the current models think by
-	// default and configuring it explicitly is refused.
-	if _, set := s.sent["thinking"]; set {
-		t.Error("the request configures thinking")
+	// Thinking is configured for exactly one reason: block_binding.
+	// A replayed thinking block whose prefix no longer matches is a
+	// 400 that kills the whole turn, and the bot replays a window of
+	// stored turns, which is never the whole conversation. Without
+	// drop_block the second message of a long chat fails and the
+	// person is told the pantry could not be saved.
+	thinking, ok := s.sent["thinking"].(map[string]any)
+	if !ok {
+		t.Fatalf("no thinking config in %v", s.sent)
+	}
+	if thinking["type"] != "adaptive" {
+		t.Errorf("thinking type %v, want adaptive — block_binding is refused with any other", thinking["type"])
+	}
+	binding, ok := thinking["block_binding"].(map[string]any)
+	if !ok {
+		t.Fatalf("no block_binding in %v", thinking)
+	}
+	if binding["prefix_mismatch_behavior"] != "drop_block" {
+		t.Errorf("prefix_mismatch_behavior %v, want drop_block", binding["prefix_mismatch_behavior"])
 	}
 
 	if sent, ok := s.sent["tools"].([]any); !ok || len(sent) != 6 {
@@ -311,5 +329,27 @@ func TestClientNeedsItsConfiguration(t *testing.T) {
 	}
 	if _, err := New(Input{APIKey: "sk-test"}); err == nil {
 		t.Error("New accepted an empty model")
+	}
+}
+
+// The block_binding field is refused without its beta, so the header is
+// as load-bearing as the body — and a missing header fails the same way
+// the bug it fixes did: on the second message of a conversation, in
+// production, never in a test that only reads the body.
+func TestTheBindingBetaIsSent(t *testing.T) {
+	s := newServer(t)
+	c := newClient(t, s)
+
+	if _, err := c.Reply(context.Background(), bot.Request{
+		System: "oi",
+		Tools:  tools(t),
+		Turns:  []bot.Turn{{Role: domain.TurnUser, Text: "usei uma taça de arroz"}},
+	}); err != nil {
+		t.Fatalf("the reply failed: %v", err)
+	}
+
+	const want = "thinking-binding-controls-2026-08-01"
+	if got := s.headers.Get("Anthropic-Beta"); !strings.Contains(got, want) {
+		t.Errorf("anthropic-beta = %q, want it to carry %q", got, want)
 	}
 }
