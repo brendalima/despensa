@@ -34,6 +34,21 @@ type Digest struct {
 	template string
 }
 
+// pantryNumber is the {{1}} of the approved template, which reads
+// "sua despensa nº {{1}}". There is one pantry: one household, one
+// service, no pantries table, and the plan cut multi-tenancy on
+// purpose — so the number is 1 and stays 1.
+//
+// It is in the template at all because Meta warned the digest would be
+// reclassified as marketing without something account-specific in it: a
+// numbered, dated statement reads as a utility notification, a bare
+// list reads as a mailshot. It is a constant rather than a setting
+// because it is the shape of the product, not a knob. If a second
+// pantry ever becomes real, this is the line that has to stop being a
+// constant — and by then the template, which is per-service, would be
+// the smaller problem.
+const pantryNumber = "1"
+
 type DigestInput struct {
 	Digests   Digests
 	Messenger Messenger
@@ -104,7 +119,12 @@ func (d *Digest) sendOne(ctx context.Context, to string, list domain.ShoppingLis
 		return d.owe(ctx, to, "no approved template")
 	}
 
-	err := d.messenger.SendTemplate(ctx, to, d.template, []string{humanize.DigestLine(list)})
+	// The order is the template's, and Meta matches the count exactly:
+	// one parameter too few is a refused send, and these two swapped
+	// would send the list as the pantry number, every week, quietly.
+	params := []string{pantryNumber, humanize.DigestLine(list)}
+
+	err := d.messenger.SendTemplate(ctx, to, d.template, params)
 	if err != nil {
 		// A refused template is the case this fallback was built for:
 		// a template pending review, a template renamed, a 24-hour

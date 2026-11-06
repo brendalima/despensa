@@ -293,8 +293,8 @@ The digest needs two things that are not code, and they are independent of each 
        "parameter_format": "POSITIONAL",
        "components": [{
          "type": "BODY",
-         "text": "Resumo semanal da sua despensa. Itens em falta: {{1}}. Valores conforme o último registro.",
-         "example": {"body_text": [["arroz — restam 540 g (≈2,5 conchas); papel toalha"]]}
+         "text": "Resumo semanal solicitado da sua despensa nº {{1}}.\nItens em falta:\n{{2}}\nValores conforme o último registro.",
+         "example": {"body_text": [["1", "arroz — restam 540 g (≈2,5 conchas); papel toalha"]]}
        }]
      }'
    ```
@@ -303,7 +303,7 @@ The digest needs two things that are not code, and they are independent of each 
 
    - **`example.body_text` is required.** A template whose parameter has no sample value is rejected; it is an array of arrays, one inner array per component.
    - **`pt_BR`** is the exact code Meta lists for Brazilian Portuguese (underscore, capital BR). It is what `languageCode` in `messenger.go` sends, and Meta matches it against the approved template.
-   - **Exactly one body parameter.** The code sends the whole list as `{{1}}`, on one line.
+   - **Two body parameters, in this order:** `{{1}}` is the pantry number and `{{2}}` is the list, on one line. Meta matches the count exactly — one too few is a refused send — and swapping them would send the list as the pantry number once a week with nothing in the logs to say so. There is a test for the order.
    - **The body sentence lives at Meta, not here.** Changing its wording needs no deploy — only the parameter comes from this repo. Keep it roughly in step with `humanize.Digest`, which is what the fallback sends in the chat.
 
    **The wording is load-bearing, and it was chosen against Meta's categorization guidelines** (read on 2026-11-06, <https://developers.facebook.com/documentation/business-messaging/whatsapp/templates/template-categorization>). A UTILITY template must meet **both** criteria: non-promotional, **and** "specific to or requested by the user (clearly related to their order, account, services, or transactions)". A pantry digest is the second one — Meta lists **"Account Alerts or Updates"** as a utility objective outright — so the category is right and the only job is not tripping the marketing triggers. Three of them apply here:
@@ -311,6 +311,8 @@ The digest needs two things that are not code, and they are independent of each 
    - **A call to action is marketing.** Meta's marketing examples list "calls to action", and add "These are marketing even if requested by users." So no *"me diga o que você comprou"* on the end, however useful it would be. An earlier draft of this template had exactly that and it was the riskiest thing in it.
    - **An unclear body is marketing.** Meta classifies "Templates where contents are unclear (for example, where contents are only `{{1}}`)" as marketing, so a bare `Lista da semana: {{1}}` is its own problem. The body has to be a real sentence.
    - **Purchase vocabulary buys nothing.** "Lista de compras" is the person's own list, not an offer, but "compras" brushes against sales language for no gain. "Resumo semanal da sua despensa" instead names it as a recurring update about their own data, which is the utility case stated out loud.
+
+   **`{{1}}` is the literal string `1`, and there is nothing behind it.** This product has no pantry id: one household, one pantry, no `pantries` table, and the plan cut multi-tenancy deliberately. The number is in the template because Meta warned the digest would be reclassified as marketing without something account-specific in it — a numbered statement reads as a utility notification, a bare list reads as a mailshot. `pantryNumber` in `internal/bot/digest.go` is therefore a constant rather than a setting, with the reasoning next to it. The word **"solicitado"** is doing the same work in the other direction: Meta's utility criterion is "specific to or **requested by** the user", and this digest is something the household set up for itself, so the word is both useful and true. The alternative considered and not taken was `semana de {{1}}` with a real date from `Digest.DueAt`, which would have invented no entity at all; it was dropped because the template was already in review with `nº {{1}}`.
 
    `humanize.Digest` was reworded to match, because the template and the in-chat fallback are the same message and the person should not be able to tell which path it took. There is a test that fails if either drifts back towards marketing wording.
 

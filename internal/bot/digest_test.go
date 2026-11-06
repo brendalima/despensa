@@ -98,15 +98,46 @@ func TestTheTemplateParameterIsOneLine(t *testing.T) {
 		t.Fatalf("send failed: %v", err)
 	}
 
-	if len(messenger.params) != 1 {
-		t.Fatalf("got %d parameters, want 1: %v", len(messenger.params), messenger.params)
+	if len(messenger.params) != 2 {
+		t.Fatalf("got %d parameters, want 2: %v", len(messenger.params), messenger.params)
 	}
-	param := messenger.params[0]
+	param := messenger.params[1]
 	if strings.ContainsAny(param, "\n\r\t") {
 		t.Errorf("the parameter carries whitespace a template cannot hold: %q", param)
 	}
 	if !strings.Contains(param, "arroz") || !strings.Contains(param, "papel toalha") {
 		t.Errorf("the parameter dropped something from the list: %q", param)
+	}
+}
+
+// Meta matches the parameter count exactly, and the order is the
+// template's: "sua despensa nº {{1}}" then "Itens em falta: {{2}}".
+// Swapped, this would send the list as the pantry number and the number
+// as the list — once a week, to a phone, with nothing in the logs to
+// say so.
+func TestTheTemplateParametersAreTheNumberThenTheList(t *testing.T) {
+	digests := newFakeDigests()
+	digests.list = lowRice()
+	messenger := &recordingMessenger{}
+
+	d := bot.MustNewDigest(bot.DigestInput{
+		Digests:    digests,
+		Messenger:  messenger,
+		Recipients: []string{mine},
+		Template:   template,
+	})
+	if err := d.Send(context.Background()); err != nil {
+		t.Fatalf("send failed: %v", err)
+	}
+
+	if len(messenger.params) != 2 {
+		t.Fatalf("got %d parameters, want 2: %v", len(messenger.params), messenger.params)
+	}
+	if messenger.params[0] != "1" {
+		t.Errorf("the first parameter is %q, want the pantry number \"1\"", messenger.params[0])
+	}
+	if !strings.Contains(messenger.params[1], "arroz") {
+		t.Errorf("the second parameter is %q, want the list", messenger.params[1])
 	}
 }
 
