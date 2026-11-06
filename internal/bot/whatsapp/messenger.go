@@ -9,6 +9,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/brendalima/despensa/internal/bot"
@@ -112,11 +114,12 @@ func (m *Messenger) SendWithButtons(ctx context.Context, to, text string, button
 		return m.SendText(ctx, to, text)
 	}
 
+	titles := uniqueTitles(buttons)
 	replies := make([]map[string]any, 0, len(buttons))
-	for _, button := range buttons {
+	for i, button := range buttons {
 		replies = append(replies, map[string]any{
 			"type":  "reply",
-			"reply": map[string]any{"id": button.ID, "title": clip(button.Label, labelLimit)},
+			"reply": map[string]any{"id": button.ID, "title": titles[i]},
 		})
 	}
 
@@ -208,6 +211,45 @@ func (m *Messenger) send(ctx context.Context, body map[string]any) error {
 		"whatsapp_message_id", ack.Messages[0].ID,
 		"status", ack.Messages[0].Status)
 	return nil
+}
+
+// uniqueTitles clips each label to Meta's limit and guarantees no two
+// come out the same.
+//
+// Meta refuses the whole message when two buttons share a title —
+// error 131009, "Duplicate button title" — and it cost a real receipt:
+// a sentence naming two items produced two buttons both reading
+// "Desfazer", the send was refused, and the person was told nothing had
+// been written about two rows already in the ledger.
+//
+// It lives here rather than in the caller because it is Meta's rule,
+// and because clipping is what can create a collision that was not in
+// the labels handed over: "Desfazer macarrão parafuso" and "Desfazer
+// macarrão penne" are different words and the same twenty characters.
+// The id carries the action, so a numeric suffix on a title changes
+// nothing except that the message is legal.
+func uniqueTitles(buttons []bot.Button) []string {
+	used := make(map[string]bool, len(buttons))
+	titles := make([]string, 0, len(buttons))
+
+	for _, button := range buttons {
+		base := clip(button.Label, labelLimit)
+		if base == "" {
+			// Meta rejects an empty title too, and a button with no
+			// label at all is a bug somewhere upstream.
+			base = "-"
+		}
+		title := base
+		for n := 2; used[title]; n++ {
+			suffix := " " + strconv.Itoa(n)
+			// TrimRight so a clip landing on a space does not leave
+			// "Desfazer macarrão  2" with two of them.
+			title = strings.TrimRight(clip(base, labelLimit-len([]rune(suffix))), " ") + suffix
+		}
+		used[title] = true
+		titles = append(titles, title)
+	}
+	return titles
 }
 
 func clip(s string, limit int) string {

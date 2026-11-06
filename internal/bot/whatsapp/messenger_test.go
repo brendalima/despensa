@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -218,4 +219,116 @@ func TestMessengerNeedsItsCredentials(t *testing.T) {
 	if _, err := whatsapp.NewMessenger(whatsapp.MessengerInput{PhoneNumberID: "x"}); err == nil {
 		t.Error("NewMessenger accepted an empty access token")
 	}
+}
+
+// Meta refuses the whole message when two buttons share a title, with
+// error 131009 "Duplicate button title". It cost a real receipt: a
+// sentence naming two items made two buttons both reading "Desfazer",
+// the send was refused, and the person was told nothing had been
+// written about two rows already in the ledger.
+func TestDuplicateButtonTitlesAreMadeUnique(t *testing.T) {
+	tests := []struct {
+		name   string
+		labels []string
+		want   []string
+	}{
+		{
+			name:   "the receipt that broke in production",
+			labels: []string{"Desfazer", "Desfazer"},
+			want:   []string{"Desfazer", "Desfazer 2"},
+		},
+		{
+			name:   "three of them",
+			labels: []string{"Desfazer", "Desfazer", "Desfazer"},
+			want:   []string{"Desfazer", "Desfazer 2", "Desfazer 3"},
+		},
+		{
+			name:   "different labels are left alone",
+			labels: []string{"Desfazer pão", "Desfazer arroz"},
+			want:   []string{"Desfazer pão", "Desfazer arroz"},
+		},
+		{
+			// Different words, the same twenty characters: clipping is
+			// what creates this collision, so clipping has to resolve it.
+			name:   "a collision created by clipping",
+			labels: []string{"Desfazer macarrão parafuso", "Desfazer macarrão panela"},
+			want:   []string{"Desfazer macarrão pa", "Desfazer macarrão 2"},
+		},
+		{
+			name:   "an empty label is still a legal title",
+			labels: []string{"", ""},
+			want:   []string{"-", "- 2"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			buttons := make([]bot.Button, 0, len(tt.labels))
+			for i, label := range tt.labels {
+				buttons = append(buttons, bot.Button{ID: "undo:" + strconv.Itoa(i+1), Label: label})
+			}
+
+			sent := captureButtons(t, buttons)
+
+			if len(sent) != len(tt.want) {
+				t.Fatalf("got %d buttons, want %d: %v", len(sent), len(tt.want), sent)
+			}
+			seen := map[string]bool{}
+			for i, title := range sent {
+				if title != tt.want[i] {
+					t.Errorf("button %d title = %q, want %q", i, title, tt.want[i])
+				}
+				if seen[title] {
+					t.Errorf("title %q repeats — Meta would refuse this message with 131009", title)
+				}
+				seen[title] = true
+				if n := len([]rune(title)); n > 20 {
+					t.Errorf("title %q is %d runes, over Meta's limit of 20", title, n)
+				}
+			}
+		})
+	}
+}
+
+// captureButtons sends one interactive message to a stub and returns
+// the button titles in the payload that went out.
+func captureButtons(t *testing.T, buttons []bot.Button) []string {
+	t.Helper()
+
+	var payload struct {
+		Interactive struct {
+			Action struct {
+				Buttons []struct {
+					Reply struct {
+						ID    string `json:"id"`
+						Title string `json:"title"`
+					} `json:"reply"`
+				} `json:"buttons"`
+			} `json:"action"`
+		} `json:"interactive"`
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("couldn't decode the outgoing payload: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"messages":[{"id":"wamid.test","message_status":"accepted"}]}`))
+	}))
+	defer server.Close()
+
+	messenger := whatsapp.MustNewMessenger(whatsapp.MessengerInput{
+		PhoneNumberID: "1234",
+		AccessToken:   "token",
+		BaseURL:       server.URL,
+	})
+	if err := messenger.SendWithButtons(context.Background(), "5521999999999", "recibo", buttons); err != nil {
+		t.Fatalf("sending failed: %v", err)
+	}
+
+	titles := make([]string, 0, len(payload.Interactive.Action.Buttons))
+	for _, b := range payload.Interactive.Action.Buttons {
+		titles = append(titles, b.Reply.Title)
+	}
+	return titles
 }
