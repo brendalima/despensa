@@ -273,7 +273,50 @@ In order, because each step is cheap and the next one is only worth running if t
 
 The digest needs two things that are not code, and they are independent of each other.
 
-1. **Submit the template.** Meta → WhatsApp → Message Templates, category **utility**, name `lista_semanal`, language `pt_BR` (the code sends that code exactly, and Meta matches it exactly). The body needs **one** parameter and the whole list goes into it on one line: `Lista da semana: {{1}}`. When it is approved, `flyctl secrets set WHATSAPP_DIGEST_TEMPLATE=lista_semanal`.
+1. **Submit the template.** It is **not in the developer app dashboard** — nothing under developers.facebook.com → your app → WhatsApp has it, which is the whole reason it is hard to find after spending phase C in that dashboard. Templates are assets of the *Messaging account* (the WABA), not of the app and not of the phone number, and they live in WhatsApp Manager:
+
+   <https://business.facebook.com/latest/whatsapp_manager/message_templates>
+
+   Meta's docs call that panel "message templates panel" / "Manage templates" and give no click path, so the direct URL is the reliable way in. Either route works; the API one is reproducible and does not depend on a UI that moves:
+
+   ```bash
+   # The WABA id, NOT the phone number id. It is on API Setup in the
+   # dev dashboard as "WhatsApp Business Account ID", and it is the
+   # same <messaging-account-id> from §5.
+   curl -X POST "https://graph.facebook.com/v27.0/$WABA_ID/message_templates" \
+     -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' \
+     -d '{
+       "name": "lista_semanal",
+       "language": "pt_BR",
+       "category": "UTILITY",
+       "parameter_format": "POSITIONAL",
+       "components": [{
+         "type": "BODY",
+         "text": "Lista de compras da semana: {{1}}. Me diga o que você comprou para eu atualizar a despensa.",
+         "example": {"body_text": [["arroz — restam 540 g (≈2,5 conchas); papel toalha"]]}
+       }]
+     }'
+   ```
+
+   Four things matter and were confirmed on Meta's own pages on 2026-11-06:
+
+   - **`example.body_text` is required.** A template whose parameter has no sample value is rejected; it is an array of arrays, one inner array per component.
+   - **`pt_BR`** is the exact code Meta lists for Brazilian Portuguese (underscore, capital BR). It is what `languageCode` in `messenger.go` sends, and Meta matches it against the approved template.
+   - **Exactly one body parameter.** The code sends the whole list as `{{1}}`, on one line.
+   - **The body sentence lives at Meta, not here.** Changing its wording needs no deploy — only the parameter comes from this repo. Keep it roughly in step with `humanize.Digest`, which is what the fallback sends in the chat.
+
+   The body deliberately carries more than `Lista da semana: {{1}}` would. A utility template whose body is almost entirely a variable is a common rejection, and this one also has to read as a service message about the person's own pantry rather than marketing.
+
+   Review is automatic on creation and takes up to 24 hours. Check it without the UI:
+
+   ```bash
+   curl -s "https://graph.facebook.com/v27.0/$WABA_ID/message_templates?fields=name,language,category,status" \
+     -H "Authorization: Bearer $TOK"
+   ```
+
+   `PENDING` is what WhatsApp Manager shows as "In-Review". When it says `APPROVED`, `flyctl secrets set WHATSAPP_DIGEST_TEMPLATE=lista_semanal`.
+
+   Two cautions: a name is unique per language, and a second attempt at the same one fails with error `100` subcode `2388024` rather than replacing it; and **deleting** an approved template blocks reuse of its name for 30 days, so do not delete `lista_semanal` to "start clean".
 2. **Create the scheduled machine**, on the image the API already runs:
    ```bash
    fly machine run --schedule weekly --command /app/digest --restart on-failure <image>
