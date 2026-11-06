@@ -2,6 +2,12 @@
 
 # Linters run through `go run` at pinned versions, so nothing needs
 # installing. Keep them in step with .github/workflows/ci.yml.
+#
+# v0.8.2 is staticcheck 2026.2.2, the newest release as of 2026-11-06,
+# and its notes say it supports the export data format of Go 1.27.2.
+# The `(compile)` errors this target reported on untouched files are
+# therefore not a question of an older version being pinned; CI is the
+# first place that failure is reproducible on a clean machine.
 STATICCHECK := honnef.co/go/tools/cmd/staticcheck@v0.8.2
 GOVULNCHECK := golang.org/x/vuln/cmd/govulncheck@v1.9.0
 
@@ -29,6 +35,10 @@ mcp: ## Serve the pantry as MCP tools over stdio
 .PHONY: api
 api: ## Serve the WhatsApp webhook
 	go run ./cmd/api
+
+.PHONY: digest
+digest: ## Send the weekly shopping list once and exit
+	go run ./cmd/digest
 
 .PHONY: test
 test: ## Run tests with the race detector
