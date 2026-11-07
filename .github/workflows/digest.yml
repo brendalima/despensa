@@ -1,0 +1,102 @@
+# The weekly digest. It is the only message this service starts, so it
+# is the only thing here that needs a clock.
+#
+# Why this and not `fly machine run --schedule weekly`: a scheduled Fly
+# machine belongs to no process group, and that has three consequences
+# that only show up weeks later. `fly deploy` skips it, so it runs the
+# image it was created with forever, however many times the code is
+# deployed. `fly secrets set` skips it too, so a rotated token stops the
+# digest and nothing says so. And the app's dashboard permanently warns
+# that it is "running multiple images" with secrets "partially
+# deployed", which is true and which trains you to ignore the warning
+# that would otherwise mean something. Fly also picks the day and the
+# hour itself — "once a week" is the whole of the contract.
+#
+# A scheduled machine recreated by the deploy workflow would fix the
+# first two of those, and it was the alternative considered: it keeps
+# the clock inside Fly, where the thing being run lives. It was not
+# taken because it trades them for a schedule nobody chooses and a
+# machine whose correctness depends on a step in another workflow having
+# run.
+#
+# So this runs a one-shot machine on whatever image the app is running
+# now, and `--rm` destroys it on exit: no standing machine, no pinned
+# image, no stale secrets.
+#
+# What this costs, written down so it is not a surprise. GitHub does not
+# promise punctuality for `schedule` — a busy hour delays a run, and the
+# docs say a run can be dropped altogether — so treat the hour as
+# approximate and never as a deadline. **And GitHub disables scheduled
+# workflows in a repository with no activity for 60 days**, by email to
+# the repository owner. A pantry that nobody commits to for two months
+# would stop getting its list, which is exactly when it is least likely
+# to be noticed: the digest is quiet by design (an empty list sends
+# nothing at all). If this ever goes quiet for a fortnight, check
+# whether the schedule was disabled before looking at any of the code.
+name: Weekly digest
+
+on:
+  schedule:
+    # Sunday 11:00 UTC — 08:00 in São Paulo, year round, because the
+    # cron is in UTC and Brazil no longer observes DST. Early enough
+    # that the list is useful before the shops fill up.
+    - cron: '0 11 * * 0'
+  # The digest is also the only thing that prunes conversation_turns,
+  # which is reason enough to be able to run it by hand.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # A send is not idempotent: nothing claims a digest the way
+  # processed_messages claims an inbound message, so two of these
+  # overlapping would be two shopping lists on one Sunday.
+  group: weekly-digest
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    name: Send the weekly digest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      # The same reasoning as CI's assertion about TEST_DATABASE_URL: a
+      # job that cannot do its work must fail, not succeed quietly. A
+      # green run with no token would be a green light that proves
+      # nothing and sends nothing.
+      - name: Check the token is there
+        run: |
+          if [ -z "${FLY_API_TOKEN:-}" ]; then
+            echo "FLY_API_TOKEN is not set: the digest cannot run."
+            exit 1
+          fi
+
+      - name: Run cmd/digest on the image the app is running
+        run: |
+          set -euo pipefail
+
+          # The image comes from the machines that serve traffic, not
+          # from `fly image show` — that lists every machine, orphans
+          # included, and an orphan is exactly what this file exists to
+          # avoid creating.
+          image=$(flyctl status --app despensa-verdant-valley-8190 --json \
+            | jq -r '[.Machines[] | select(.process_group == "app")][0].config.image')
+
+          if [ -z "$image" ] || [ "$image" = "null" ]; then
+            echo "No machine in the 'app' process group: refusing to guess an image."
+            exit 1
+          fi
+          echo "Running /app/digest on $image"
+
+          # The command is a positional argument. --command is a flag of
+          # --shell and is ignored without it, which silently starts
+          # /app/api instead: the image's CMD. See the handoff's §5.
+          flyctl machine run --app despensa-verdant-valley-8190 \
+            --rm --restart no --vm-memory 256 \
+            "$image" /app/digest
