@@ -85,11 +85,25 @@ jobs:
           # from `fly image show` — that lists every machine, orphans
           # included, and an orphan is exactly what this file exists to
           # avoid creating.
-          image=$(flyctl status --app despensa-verdant-valley-8190 --json \
-            | jq -r '[.Machines[] | select(.process_group == "app")][0].config.image')
+          #
+          # The process group is at config.metadata.fly_process_group.
+          # There is no top-level `process_group` field on a machine in
+          # either `machine list --json` or `status --json`, and asking
+          # for one yields null for every machine, which selects nothing
+          # at all. `machine list` is preferred over `status` because it
+          # returns the Machines API's own shape.
+          machines=$(flyctl machine list --app despensa-verdant-valley-8190 --json)
+          image=$(printf '%s' "$machines" | jq -r '
+            [ .[]
+              | select(.config.metadata.fly_process_group == "app")
+              | select(.state != "destroyed")
+            ][0].config.image // empty')
 
-          if [ -z "$image" ] || [ "$image" = "null" ]; then
+          if [ -z "$image" ]; then
             echo "No machine in the 'app' process group: refusing to guess an image."
+            echo "What the app does have:"
+            printf '%s' "$machines" | jq -r '.[]
+              | "  \(.id)  state=\(.state)  group=\(.config.metadata.fly_process_group // "<none>")  image=\(.config.image)"'
             exit 1
           fi
           echo "Running /app/digest on $image"
