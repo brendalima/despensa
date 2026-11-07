@@ -86,13 +86,26 @@ func (i Item) Portion(name string) (Portion, bool) {
 
 // UnitPortion is the portion worth exactly one canonical unit. It is what
 // lets bread be counted in "fatias" instead of "un".
+//
+// A portion whose name is the unit's own abbreviation does not count as
+// one. "g" on an item measured in grams is not a word anybody invented,
+// it is the unit written out, and counting in it is what stops 5 kg
+// from reading as 5 kg. The model writes these down — it gave rice a
+// portion called "g" and milk one called "ml" — so this has to hold for
+// rows already in the database, not only for what is written next.
 func (i Item) UnitPortion() (Portion, bool) {
 	for _, p := range i.Portions {
-		if p.One == Thousand {
+		if p.One == Thousand && !i.NamesUnit(p) {
 			return p, true
 		}
 	}
 	return Portion{}, false
+}
+
+// NamesUnit reports that a portion is the canonical unit under its own
+// name, adding no vocabulary to the item.
+func (i Item) NamesUnit(p Portion) bool {
+	return strings.EqualFold(strings.TrimSpace(p.Name), string(i.Unit))
 }
 
 func (i Item) Display() Amount { return i.OnHand.AtLeastZero() }

@@ -399,3 +399,49 @@ func TestDigestWithNothingMissing(t *testing.T) {
 		t.Errorf("Digest() = %q, want it to say nothing is missing", got)
 	}
 }
+
+// The plan's target output is "arroz: 5 kg → 4,6 kg (≈26 taças)". That
+// stopped happening the moment the model started giving items a portion
+// named after their own unit: the unit portion won, the weight was
+// counted in grams, and 5 kg read as "5000 g".
+//
+// These are the items as the model actually created them.
+func TestAPortionNamedAfterTheUnitDoesNotDefeatScaling(t *testing.T) {
+	rice := domain.Item{Name: "arroz", Unit: domain.UnitGram, Portions: []domain.Portion{
+		{Name: "g", One: domain.Thousand},
+		{Name: "taça", One: 180 * domain.Thousand},
+		{Name: "pacote", One: 5000 * domain.Thousand},
+	}}
+	milk := domain.Item{Name: "leite", Unit: domain.UnitMillilitre, Portions: []domain.Portion{
+		{Name: "ml", One: domain.Thousand},
+		{Name: "caixa", One: 1000 * domain.Thousand},
+	}}
+
+	tests := []struct {
+		name string
+		item domain.Item
+		on   domain.Amount
+		want string
+	}{
+		{"kilos, not thousands of grams", rice, 5000 * domain.Thousand, "5 kg"},
+		{"grams below the kilo", rice, 433 * domain.Thousand, "433 g"},
+		{"litres, not thousands of millilitres", milk, 2500 * domain.Thousand, "2,5 l"},
+		{"millilitres below the litre", milk, 500 * domain.Thousand, "500 ml"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := humanize.Quantity(tt.item, tt.on); got != tt.want {
+				t.Errorf("Quantity() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+
+	// And the unit must never show up as the secondary either.
+	if got := humanize.Level(rice, 20*domain.Thousand); got != "20 g" {
+		t.Errorf("Level() = %q, want %q — the unit said twice says nothing twice", got, "20 g")
+	}
+	// The real vocabulary still reads as it should.
+	if got := humanize.Level(milk, 2500*domain.Thousand); got != "2,5 l (≈2,5 caixas)" {
+		t.Errorf("Level() = %q", got)
+	}
+}

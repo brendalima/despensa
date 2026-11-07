@@ -42,6 +42,10 @@ func Secondary(item domain.Item, a domain.Amount) string {
 		if hasUnit && p.Name == unitPortion.Name {
 			continue
 		}
+		// "20 g (≈20 g)" says nothing twice.
+		if item.NamesUnit(p) {
+			continue
+		}
 		count := a.In(p.One).RoundHuman()
 		// "0,7 pacotes" and "383 colheres" say less than the weight.
 		if count < domain.QtyOf(2) || count > domain.QtyOf(40) {

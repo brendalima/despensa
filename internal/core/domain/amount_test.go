@@ -218,3 +218,66 @@ func TestDriftAndThreshold(t *testing.T) {
 		t.Error("an empty item with no threshold set does not read as low")
 	}
 }
+
+// The model writes down portions named after the unit — it gave rice a
+// portion called "g" and milk one called "ml". Those are the unit under
+// its own name, not a word anyone invented, and letting one count as
+// the unit portion is what stops 5 kg from reading as 5 kg.
+func TestUnitPortionIgnoresAPortionNamedAfterTheUnit(t *testing.T) {
+	tests := []struct {
+		name     string
+		unit     domain.Unit
+		portions []domain.Portion
+		want     string // the unit portion's name, empty for none
+	}{
+		{
+			name: "a gram item with a portion called g",
+			unit: domain.UnitGram,
+			portions: []domain.Portion{
+				{Name: "g", One: domain.Thousand},
+				{Name: "taça", One: 180 * domain.Thousand},
+			},
+			want: "",
+		},
+		{
+			name:     "case and padding do not get around it",
+			unit:     domain.UnitMillilitre,
+			portions: []domain.Portion{{Name: " ML ", One: domain.Thousand}},
+			want:     "",
+		},
+		{
+			name: "a real word worth one unit still wins",
+			unit: domain.UnitPiece,
+			portions: []domain.Portion{
+				{Name: "fatia", One: domain.Thousand},
+				{Name: "pacote", One: 22 * domain.Thousand},
+			},
+			want: "fatia",
+		},
+		{
+			name: "un on a piece item adds nothing either",
+			unit: domain.UnitPiece,
+			portions: []domain.Portion{
+				{Name: "un", One: domain.Thousand},
+				{Name: "cartela", One: 20 * domain.Thousand},
+			},
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			item := domain.Item{Unit: tt.unit, Portions: tt.portions}
+			got, ok := item.UnitPortion()
+			if tt.want == "" {
+				if ok {
+					t.Errorf("UnitPortion() = %q, want none", got.Name)
+				}
+				return
+			}
+			if !ok || got.Name != tt.want {
+				t.Errorf("UnitPortion() = %q/%v, want %q", got.Name, ok, tt.want)
+			}
+		})
+	}
+}
