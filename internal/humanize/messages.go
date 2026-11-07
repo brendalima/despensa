@@ -97,17 +97,49 @@ const digestParamLimit = 1024
 
 // DigestLine is the list as the one parameter of an approved template.
 //
-// It is a single line on purpose. A template parameter is substituted
-// into a sentence the template already owns, so a newline in it would
-// break that sentence rather than lay out a list. Meta is also widely
-// reported to refuse parameters holding newlines or runs of whitespace,
-// which their current documentation neither states nor denies — this
-// does not depend on which it is.
+// It is a single line because Meta refuses anything else: a parameter
+// holding a newline or a tab comes back as error 132018, "Param text
+// cannot have new-line/tab characters or more than 4 consecutive
+// spaces", confirmed against the live API on 2026-11-07. Their
+// documentation states none of that, so the error is the record of it.
+// `oneLine` therefore has to run over the person's own item names, not
+// merely over what this file assembles.
+//
+// Within that one line the entries are compact, which is the only
+// reason this does not reuse listEntries: eight items each reading
+// "— restam" is mostly punctuation, and the quantity after the name
+// already says what is left. The chat renderings keep the longer
+// wording because there each entry has a line of its own. What must
+// not differ between the two is the wording Meta judges — see Digest.
 func DigestLine(l domain.ShoppingList) string {
 	if l.Empty() {
 		return "nada faltando"
 	}
-	return clip(oneLine(strings.Join(listEntries(l), "; ")), digestParamLimit)
+	return clip(oneLine(strings.Join(digestEntries(l), " • ")), digestParamLimit)
+}
+
+// digestEntries is one entry per thing to buy, for the single line a
+// template parameter has to be.
+func digestEntries(l domain.ShoppingList) []string {
+	entries := make([]string, 0, len(l.Low)+len(l.Notes))
+	for _, item := range l.Low {
+		switch {
+		case item.Drifted():
+			// The hedge survives the shortening. A drifted item is the
+			// one case where the number is known to be wrong, it is
+			// rare, and a list that quietly claims to be sure is worse
+			// than a long one.
+			entries = append(entries, item.Name+" acabou (ou minha conta se perdeu)")
+		case item.OnHand == 0:
+			entries = append(entries, item.Name+" acabou")
+		default:
+			entries = append(entries, item.Name+" "+Level(item, item.OnHand))
+		}
+	}
+	for _, note := range l.Notes {
+		entries = append(entries, note.Text)
+	}
+	return entries
 }
 
 // listEntries is one line per thing to buy, shared by every rendering
@@ -115,11 +147,16 @@ func DigestLine(l domain.ShoppingList) string {
 func listEntries(l domain.ShoppingList) []string {
 	entries := make([]string, 0, len(l.Low)+len(l.Notes))
 	for _, item := range l.Low {
-		if item.Drifted() {
+		switch {
+		case item.Drifted():
 			entries = append(entries, item.Name+" — acabou (ou minha conta se perdeu)")
-			continue
+		case item.OnHand == 0:
+			// "restam 0 ml" is eight characters saying nothing, and a
+			// list of them reads as a fault rather than as a list.
+			entries = append(entries, item.Name+" — acabou")
+		default:
+			entries = append(entries, item.Name+" — restam "+Level(item, item.OnHand))
 		}
-		entries = append(entries, item.Name+" — restam "+Level(item, item.OnHand))
 	}
 	for _, note := range l.Notes {
 		entries = append(entries, note.Text)
