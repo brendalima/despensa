@@ -445,3 +445,53 @@ func TestAPortionNamedAfterTheUnitDoesNotDefeatScaling(t *testing.T) {
 		t.Errorf("Level() = %q", got)
 	}
 }
+
+// The one line a template parameter has to be is also the line the
+// household reads every Sunday, so its shape is tested rather than
+// left to whatever strings.Join happened to be called with. Meta
+// refuses a newline in a parameter with error 132018 — the separator
+// is the only layout available.
+func TestDigestLineIsCompactAndBulleted(t *testing.T) {
+	low := rice()
+	low.OnHand = 433 * domain.Thousand
+
+	empty := domain.Item{Name: "ketchup", Unit: domain.UnitMillilitre}
+
+	drifted := domain.Item{Name: "feijão", Unit: domain.UnitGram, OnHand: -20 * domain.Thousand}
+
+	got := humanize.DigestLine(domain.ShoppingList{
+		Low:   []domain.Item{low, empty, drifted},
+		Notes: []domain.Note{{Text: "papel toalha"}},
+	})
+
+	want := "arroz 433 g (≈2,5 taças) • ketchup acabou • " +
+		"feijão acabou (ou minha conta se perdeu) • papel toalha"
+	if got != want {
+		t.Errorf("DigestLine() =\n%q\nwant\n%q", got, want)
+	}
+	// The compact form is the whole point: "restam" eight times is
+	// what made the first real digest hard to read.
+	if strings.Contains(got, "restam") || strings.Contains(got, "—") {
+		t.Errorf("DigestLine() = %q, want the compact entries", got)
+	}
+}
+
+// Zero is "acabou" everywhere, not "restam 0 ml": the chat and the
+// template say the same thing about an item that has run out.
+func TestNothingLeftReadsAsAcabou(t *testing.T) {
+	empty := domain.Item{Name: "ketchup", Unit: domain.UnitMillilitre}
+	list := domain.ShoppingList{Low: []domain.Item{empty}}
+
+	for name, got := range map[string]string{
+		"ShoppingList": humanize.ShoppingList(list),
+		"Digest":       humanize.Digest(list),
+		"DigestLine":   humanize.DigestLine(list),
+	} {
+		if !strings.Contains(got, "acabou") {
+			t.Errorf("%s() = %q, want it to say the item ran out", name, got)
+		}
+		if strings.Contains(got, "0 ml") {
+			t.Errorf("%s() = %q, want no \"restam 0 ml\"", name, got)
+		}
+	}
+}
