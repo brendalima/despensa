@@ -57,6 +57,17 @@ var forbidden = map[string][]string{
 		modulePath + "/internal/bot/whatsapp",
 		"database/sql", "github.com/jackc/pgx",
 	},
+	// The transcriber is a third adapter, and the only importer of
+	// OpenAI. It hears bytes and answers words: it must not know the
+	// provider the audio came from, the model that reads it, or the
+	// pantry it ends up writing to.
+	"internal/bot/whisper": {
+		modulePath + "/adapters", modulePath + "/internal/repository",
+		modulePath + "/internal/bot/claude", modulePath + "/internal/bot/whatsapp",
+		modulePath + "/internal/core/services",
+		"database/sql", "github.com/jackc/pgx",
+		"github.com/anthropics/anthropic-sdk-go",
+	},
 	// The provider adapter is the other half: HTTP and Meta's payloads,
 	// with no model and no pantry in it.
 	"internal/bot/whatsapp": {

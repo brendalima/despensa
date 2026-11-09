@@ -16,8 +16,22 @@ import (
 type APIConfig struct {
 	Config
 
-	Anthropic AnthropicConfig
-	WhatsApp  WhatsAppConfig
+	Anthropic     AnthropicConfig
+	Transcription TranscriptionConfig
+	WhatsApp      WhatsAppConfig
+}
+
+// TranscriptionConfig is the voice-note path. It is the one block here
+// that may stay empty: without a key the bot still starts and still
+// answers every typed message, and an audio gets a line asking for
+// text instead.
+type TranscriptionConfig struct {
+	APIKey string
+
+	// Model is open for the same reason the Anthropic one is: what
+	// matters is how well it hears a sentence about groceries, and
+	// that is measured in production, not assumed here.
+	Model string
 }
 
 type AnthropicConfig struct {
@@ -49,6 +63,7 @@ type WhatsAppConfig struct {
 }
 
 const (
+	defaultWhisperModel      = "whisper-1"
 	defaultModel             = "claude-opus-5-5"
 	defaultMaxToolIterations = 6
 )
@@ -66,6 +81,10 @@ func LoadAPIConfig() (APIConfig, error) {
 			Model:             defaultModel,
 			MaxToolIterations: defaultMaxToolIterations,
 		},
+		Transcription: TranscriptionConfig{
+			APIKey: strings.TrimSpace(os.Getenv("OPENAI_API_KEY")),
+			Model:  defaultWhisperModel,
+		},
 		WhatsApp: WhatsAppConfig{
 			VerifyToken:    strings.TrimSpace(os.Getenv("WHATSAPP_VERIFY_TOKEN")),
 			AppSecret:      strings.TrimSpace(os.Getenv("WHATSAPP_APP_SECRET")),
@@ -78,6 +97,9 @@ func LoadAPIConfig() (APIConfig, error) {
 
 	if v := strings.TrimSpace(os.Getenv("ANTHROPIC_MODEL")); v != "" {
 		cfg.Anthropic.Model = v
+	}
+	if v := strings.TrimSpace(os.Getenv("WHISPER_MODEL")); v != "" {
+		cfg.Transcription.Model = v
 	}
 	if v := strings.TrimSpace(os.Getenv("BOT_MAX_TOOL_ITERATIONS")); v != "" {
 		iterations, err := strconv.Atoi(v)

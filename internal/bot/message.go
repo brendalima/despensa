@@ -27,9 +27,23 @@ type Message struct {
 
 	Text string
 
+	// Audio is a voice note or an audio file, when one came instead of
+	// words. It carries the provider's id and nothing else: the bytes
+	// are fetched after the claim, so a redelivery never pays for the
+	// same transcription twice.
+	Audio *Audio
+
 	// Choice is a button payload. It is not prose, so it never reaches
 	// the model: the id in it is the whole state the button needs.
 	Choice string
+}
+
+// Audio names an attachment the transcriber will have to hear. A voice
+// note and an attached audio file are the same thing here: both have
+// to reach the transcriber before the model can read them.
+type Audio struct {
+	MediaID   string
+	MediaType string
 }
 
 // Button is one tap. The payload is the state — there is no table of

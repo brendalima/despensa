@@ -31,6 +31,14 @@ type Bot struct {
 	chat      Chat
 	digests   Digests
 
+	// media and ears are the audio path: the bytes, then the words.
+	// Both are always set — when no key is configured the composition
+	// root passes something that fails politely, because a nil
+	// interface here would be a panic in the one branch nobody runs
+	// locally.
+	media MediaFetcher
+	ears  Transcriber
+
 	// allowed is the closed list of numbers. Anyone who can send a
 	// message can write to the pantry, so this is not a preference.
 	allowed map[string]bool
@@ -47,6 +55,8 @@ type Input struct {
 	Messenger Messenger
 	Chat      Chat
 	Digests   Digests
+	Media     MediaFetcher
+	Ears      Transcriber
 
 	AllowedNumbers []string
 	MaxIterations  int
@@ -68,6 +78,12 @@ func New(in Input) (*Bot, error) {
 	if in.Digests == nil {
 		return nil, errors.New("missing digests dependency")
 	}
+	if in.Media == nil {
+		return nil, errors.New("missing media dependency")
+	}
+	if in.Ears == nil {
+		return nil, errors.New("missing transcriber dependency")
+	}
 	if len(in.AllowedNumbers) == 0 {
 		return nil, errors.New("missing allowed numbers")
 	}
@@ -86,6 +102,8 @@ func New(in Input) (*Bot, error) {
 		messenger:     in.Messenger,
 		chat:          in.Chat,
 		digests:       in.Digests,
+		media:         in.Media,
+		ears:          in.Ears,
 		allowed:       allowed,
 		maxIterations: in.MaxIterations,
 	}, nil
@@ -108,6 +126,11 @@ type outcome struct {
 	iterations int
 	tools      []string
 	buttons    int
+
+	// audio records that the sentence the model read was heard and
+	// not typed. Without it a transcription that went subtly wrong
+	// looks in the logs like a person who said something odd.
+	audio bool
 
 	// digest records that a weekly list owed from an earlier run rode
 	// out on this turn, which is otherwise invisible: it is a second
@@ -143,6 +166,7 @@ func (b *Bot) Handle(ctx context.Context, msg Message) {
 		"iterations", done.iterations,
 		"tools", done.tools,
 		"buttons", done.buttons,
+		"audio", done.audio,
 		"digest", done.digest,
 		"took", time.Since(started).String())
 }
@@ -192,12 +216,54 @@ func (b *Bot) handle(ctx context.Context, msg Message, done *outcome) error {
 		return b.choose(ctx, msg)
 	}
 
+	// After the claim, never before it: a redelivery must not pay for
+	// the same seconds of audio twice. The cost of that order is that
+	// a failed transcription is not retried either — which is the
+	// honest trade, since the answer below asks for the sentence in
+	// text instead of silently billing again.
+	if msg.Audio != nil && strings.TrimSpace(msg.Text) == "" {
+		heard, err := b.listen(ctx, msg)
+		if err != nil {
+			slog.Error("couldn't hear the audio",
+				"provider", msg.Provider, "message_id", msg.ID, "error", err)
+			done.kind = "unheard"
+			return b.messenger.SendText(ctx, msg.ChatID, humanize.CouldntHear())
+		}
+		msg.Text = heard
+		done.audio = true
+	}
+
 	if strings.TrimSpace(msg.Text) == "" {
 		done.kind = "empty"
 		return b.messenger.SendText(ctx, msg.ChatID, humanize.NothingToRead())
 	}
 	done.kind = "answered"
 	return b.converse(ctx, msg, done)
+}
+
+// listen fetches a voice note and returns what was said in it. From
+// here on the message is indistinguishable from a typed one: the
+// transcript is the text, it is what the model reads, and it is what
+// the conversation remembers.
+func (b *Bot) listen(ctx context.Context, msg Message) (string, error) {
+	audio, mediaType, err := b.media.Fetch(ctx, msg.Audio.MediaID)
+	if err != nil {
+		return "", fmt.Errorf("couldn't fetch the audio of %s: %w", msg.ID, err)
+	}
+	if mediaType == "" {
+		mediaType = msg.Audio.MediaType
+	}
+
+	text, err := b.ears.Transcribe(ctx, audio, mediaType)
+	if err != nil {
+		return "", fmt.Errorf("couldn't transcribe %s: %w", msg.ID, err)
+	}
+
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "", fmt.Errorf("the transcript of %s is empty", msg.ID)
+	}
+	return text, nil
 }
 
 // choose answers a tap. Only one button exists so far, and it undoes.

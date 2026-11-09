@@ -263,9 +263,17 @@ func NotForYou() string {
 }
 
 // NothingToRead answers a message with nothing in it to act on — a
-// photo, an audio, a tap on something that is no longer there.
+// photo, a tap on something that is no longer there.
 func NothingToRead() string {
 	return "Não consegui ler essa. Me manda em texto o que você usou ou comprou?"
+}
+
+// CouldntHear answers an audio that never became words: the download
+// failed, the transcriber did, or it heard silence. It asks for text
+// rather than for the audio again, because the message was already
+// claimed and re-sending the same recording would fail the same way.
+func CouldntHear() string {
+	return "Não consegui entender esse áudio. Me manda em texto o que você usou ou comprou?"
 }
 
 // GotLost answers the one case where the loop gave up: the model used

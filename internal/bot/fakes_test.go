@@ -269,6 +269,47 @@ func (d *fakeDigests) Paid(_ context.Context, id int64) error {
 	return nil
 }
 
+// fakeMedia is the attachment download. It counts the fetches for the
+// same reason fakeTranscriber counts the transcriptions: the whole
+// point of doing both after the claim is that a redelivery does
+// neither.
+type fakeMedia struct {
+	data      []byte
+	mediaType string
+
+	fetched []string
+	err     error
+}
+
+func (m *fakeMedia) Fetch(_ context.Context, mediaID string) ([]byte, string, error) {
+	m.fetched = append(m.fetched, mediaID)
+	if m.err != nil {
+		return nil, "", m.err
+	}
+	return m.data, m.mediaType, nil
+}
+
+// fakeTranscriber answers with one sentence and counts the calls,
+// because a transcription is the one step in a message that is billed
+// by the second.
+type fakeTranscriber struct {
+	text string
+
+	heard []string
+	calls int
+	err   error
+}
+
+func (t *fakeTranscriber) Transcribe(_ context.Context, audio []byte, mediaType string) (string, error) {
+	t.calls++
+	t.heard = append(t.heard, mediaType)
+	if t.err != nil {
+		return "", t.err
+	}
+	_ = audio
+	return t.text, nil
+}
+
 // harness wires the real tools and the fakes together.
 type harness struct {
 	bot       *bot.Bot
@@ -277,6 +318,8 @@ type harness struct {
 	messenger *fakeMessenger
 	chat      *fakeChat
 	digests   *fakeDigests
+	media     *fakeMedia
+	ears      *fakeTranscriber
 }
 
 func newHarness(t *testing.T, replies ...bot.Turn) *harness {
@@ -288,6 +331,8 @@ func newHarness(t *testing.T, replies ...bot.Turn) *harness {
 		messenger: &fakeMessenger{},
 		chat:      newFakeChat(),
 		digests:   newFakeDigests(),
+		media:     &fakeMedia{data: []byte("ogg bytes"), mediaType: "audio/ogg"},
+		ears:      &fakeTranscriber{text: "usei uma taça de arroz"},
 	}
 
 	b, err := bot.New(bot.Input{
@@ -296,6 +341,8 @@ func newHarness(t *testing.T, replies ...bot.Turn) *harness {
 		Messenger:      h.messenger,
 		Chat:           h.chat,
 		Digests:        h.digests,
+		Media:          h.media,
+		Ears:           h.ears,
 		AllowedNumbers: []string{"+55 11 99999-0000"},
 		MaxIterations:  3,
 	})
@@ -323,6 +370,8 @@ func newHouseholdHarness(t *testing.T, replies ...bot.Turn) *harness {
 		messenger: &fakeMessenger{},
 		chat:      newFakeChat(),
 		digests:   newFakeDigests(),
+		media:     &fakeMedia{data: []byte("ogg bytes"), mediaType: "audio/ogg"},
+		ears:      &fakeTranscriber{text: "usei uma taça de arroz"},
 	}
 
 	b, err := bot.New(bot.Input{
@@ -331,6 +380,8 @@ func newHouseholdHarness(t *testing.T, replies ...bot.Turn) *harness {
 		Messenger: h.messenger,
 		Chat:      h.chat,
 		Digests:   h.digests,
+		Media:     h.media,
+		Ears:      h.ears,
 		// Written the way a person writes them into configuration,
 		// because only the digits are compared.
 		AllowedNumbers: []string{"+55 11 99999-0000", " +55 (21) 98888-7777 "},
@@ -341,6 +392,18 @@ func newHouseholdHarness(t *testing.T, replies ...bot.Turn) *harness {
 	}
 	h.bot = b
 	return h
+}
+
+// voice is an audio message from one number: an id and a mime type,
+// no words. The bytes live in the fake media client.
+func voice(number, id string) bot.Message {
+	return bot.Message{
+		Provider: domain.SourceWhatsApp,
+		ID:       id,
+		ChatID:   number,
+		From:     number,
+		Audio:    &bot.Audio{MediaID: "media-" + id, MediaType: "audio/ogg"},
+	}
 }
 
 // from is a message from one number, with its own id so the claim does
