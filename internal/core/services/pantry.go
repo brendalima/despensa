@@ -131,10 +131,19 @@ func (s *Pantry) record(ctx context.Context, tx repository.PantryTx, in domain.E
 		return domain.Receipt{}, domain.NewValidationError("quantity", "would put more in the pantry than fits in it")
 	}
 
+	var noteCleared bool
 	if created {
 		if err := tx.CreateItem(ctx, item); err != nil {
 			return domain.Receipt{}, err
 		}
+		// The thing was a reminder and is now inventory, so the two
+		// rows would ask for the same purchase twice. Same transaction:
+		// an entry that fails later must leave the note where it was.
+		removed, err := tx.DeleteNotesNamed(ctx, item.Name)
+		if err != nil {
+			return domain.Receipt{}, err
+		}
+		noteCleared = removed > 0
 	}
 	if learned != nil {
 		if err := tx.UpsertPortion(ctx, item.ID, *learned); err != nil {
@@ -160,6 +169,23 @@ func (s *Pantry) record(ctx context.Context, tx repository.PantryTx, in domain.E
 	}
 	item.OnHand = after
 
+	// "Buy it anyway" is a one-time intent, so the purchase ends it —
+	// but only a purchase that actually clears the minimum. Using one
+	// slice of a pinned loaf must not unpin the bread.
+	//
+	// Undo does not bring the pin back, the same way it does not bring
+	// back a note the new item cleared: the ledger is the inventory,
+	// and neither of those is in the ledger. Asking again is one
+	// sentence; an undo that silently reinstates a decision is not.
+	var pinCleared bool
+	if item.Pinned() && in.Kind == domain.EventRestock && after > item.Threshold {
+		if err := tx.SetShopping(ctx, item.ID, domain.ShoppingAuto); err != nil {
+			return domain.Receipt{}, err
+		}
+		item.Shopping = domain.ShoppingAuto
+		pinCleared = true
+	}
+
 	return domain.Receipt{
 		Item:           item,
 		EventID:        eventID,
@@ -167,6 +193,8 @@ func (s *Pantry) record(ctx context.Context, tx repository.PantryTx, in domain.E
 		After:          after,
 		PortionLearned: learned,
 		ItemCreated:    created,
+		NoteCleared:    noteCleared,
+		PinCleared:     pinCleared,
 		// The moment, not the state: an item already low must not
 		// raise the alert on every use.
 		CrossedThreshold: item.BelowThreshold() && before > item.Threshold,
@@ -326,6 +354,12 @@ func (s *Pantry) Update(ctx context.Context, change domain.ItemChange) (domain.I
 			}
 			item.Threshold = *change.Threshold
 		}
+		if change.Shopping != nil {
+			if !change.Shopping.Valid() {
+				return domain.NewValidationError("shopping_mode", "is not a known shopping mode")
+			}
+			item.Shopping = *change.Shopping
+		}
 		if change.Archive != nil {
 			switch {
 			case *change.Archive && !item.Archived():
@@ -382,7 +416,7 @@ func (s *Pantry) ShoppingList(ctx context.Context) (domain.ShoppingList, error) 
 
 	low := []domain.Item{}
 	for _, item := range items {
-		if item.BelowThreshold() {
+		if item.OnShoppingList() {
 			low = append(low, item)
 		}
 	}
@@ -397,7 +431,7 @@ func (s *Pantry) AddNote(ctx context.Context, text string) (domain.Note, error) 
 	return s.repo.AddNote(ctx, trimmed)
 }
 
-func (s *Pantry) RemoveNote(ctx context.Context, id int64) error {
+func (s *Pantry) RemoveNote(ctx context.Context, id int64) (domain.Note, error) {
 	return s.repo.RemoveNote(ctx, id)
 }
 

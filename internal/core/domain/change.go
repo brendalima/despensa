@@ -10,6 +10,9 @@ type ItemChange struct {
 	Category  *string
 	Threshold *Amount
 
+	// Shopping overrules the minimum, in either direction.
+	Shopping *ShoppingMode
+
 	// Portions are added or corrected, not replaced: a size given here
 	// is the person's own, so it outranks any estimate.
 	Portions []Portion
@@ -24,5 +27,6 @@ type ItemChange struct {
 // than hiding as a no-op.
 func (c ItemChange) Empty() bool {
 	return c.Name == nil && c.Category == nil && c.Threshold == nil &&
-		len(c.Portions) == 0 && c.Aliases == nil && c.Archive == nil
+		c.Shopping == nil && len(c.Portions) == 0 && c.Aliases == nil &&
+		c.Archive == nil
 }

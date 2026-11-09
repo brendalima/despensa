@@ -1,7 +1,7 @@
 // Package agent holds the tools the model calls, as plain Go values. It
 // knows nothing about MCP or about any model provider: cmd/mcp hands
 // these to an MCP server and the bot hands them to the Anthropic SDK,
-// and both get the same six tools with the same wording.
+// and both get the same seven tools with the same wording.
 //
 // Keeping the provider out is not tidiness. The tool descriptions are
 // the product's behaviour, and the day the bot and Claude Desktop
@@ -36,7 +36,7 @@ type Tool struct {
 	Handler Handler
 }
 
-// ToolSet is the six tools, with their schemas resolved once so every
+// ToolSet is the seven tools, with their schemas resolved once so every
 // call is checked before the handler runs.
 type ToolSet struct {
 	tools    []Tool
@@ -93,6 +93,12 @@ func New(pantry Pantry, source string) (*ToolSet, error) {
 				Description: descAddShoppingNote,
 				Schema:      addShoppingNoteSchema(),
 				Handler:     t.addShoppingNote,
+			},
+			{
+				Name:        ToolRemoveShoppingNote,
+				Description: descRemoveShoppingNote,
+				Schema:      removeShoppingNoteSchema(),
+				Handler:     t.removeShoppingNote,
 			},
 		},
 		resolved: map[string]*jsonschema.Resolved{},

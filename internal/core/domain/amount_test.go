@@ -281,3 +281,67 @@ func TestUnitPortionIgnoresAPortionNamedAfterTheUnit(t *testing.T) {
 		})
 	}
 }
+
+func TestShoppingModeValid(t *testing.T) {
+	for _, m := range domain.AllShoppingModes() {
+		if !m.Valid() {
+			t.Errorf("AllShoppingModes contains %q but Valid() says no", m)
+		}
+	}
+	if domain.ShoppingMode("sometimes").Valid() {
+		t.Error(`ShoppingMode("sometimes").Valid() = true, want false`)
+	}
+	// The zero value is what a struct literal that never mentions the
+	// mode carries, and it has to mean the default rather than a
+	// decision: every Item built before this field existed is one.
+	if domain.ShoppingMode("").OrAuto() != domain.ShoppingAuto {
+		t.Error(`the zero mode does not resolve to auto`)
+	}
+	if domain.ShoppingNever.OrAuto() != domain.ShoppingNever {
+		t.Error("OrAuto changed a mode that was set")
+	}
+}
+
+// The level and the decision are two facts, and the list is the one
+// place they meet. BelowThreshold stays about the level alone, because
+// the receipt's alert is about the level.
+func TestOnShoppingList(t *testing.T) {
+	const minimum = domain.Amount(500 * domain.Thousand)
+
+	tests := []struct {
+		name   string
+		onHand domain.Amount
+		mode   domain.ShoppingMode
+		want   bool
+	}{
+		{"plenty, by the minimum", 5000 * domain.Thousand, domain.ShoppingAuto, false},
+		{"low, by the minimum", 100 * domain.Thousand, domain.ShoppingAuto, true},
+		{"at the minimum, by the minimum", minimum, domain.ShoppingAuto, true},
+		{"drifted, by the minimum", -200 * domain.Thousand, domain.ShoppingAuto, true},
+
+		{"plenty, held back", 5000 * domain.Thousand, domain.ShoppingNever, false},
+		{"low, held back", 100 * domain.Thousand, domain.ShoppingNever, false},
+		{"drifted, held back", -200 * domain.Thousand, domain.ShoppingNever, false},
+
+		{"plenty, pinned", 5000 * domain.Thousand, domain.ShoppingAlways, true},
+		{"low, pinned", 100 * domain.Thousand, domain.ShoppingAlways, true},
+
+		// The whole reason the switch has a default.
+		{"plenty, mode never set", 5000 * domain.Thousand, "", false},
+		{"low, mode never set", 100 * domain.Thousand, "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			item := domain.Item{OnHand: tt.onHand, Threshold: minimum, Shopping: tt.mode}
+			if got := item.OnShoppingList(); got != tt.want {
+				t.Errorf("OnShoppingList() = %v, want %v", got, tt.want)
+			}
+			// A held-back item is still low, which is what lets the
+			// receipt warn and the listing explain itself.
+			if want := tt.onHand <= minimum; item.BelowThreshold() != want {
+				t.Errorf("BelowThreshold() = %v, want %v: the mode moved the level", item.BelowThreshold(), want)
+			}
+		})
+	}
+}

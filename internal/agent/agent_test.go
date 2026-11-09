@@ -48,6 +48,7 @@ type fakePantry struct {
 	undone   []int64
 	changes  []domain.ItemChange
 	added    []string
+	removed  []int64
 
 	// The flags stand in for the three states the service reports and
 	// the tools only pass along.
@@ -133,6 +134,14 @@ func (p *fakePantry) AddNote(_ context.Context, text string) (domain.Note, error
 	return domain.Note{ID: 7, Text: text}, nil
 }
 
+func (p *fakePantry) RemoveNote(_ context.Context, id int64) (domain.Note, error) {
+	p.removed = append(p.removed, id)
+	if p.err != nil {
+		return domain.Note{}, p.err
+	}
+	return domain.Note{ID: id, Text: "fermento"}, nil
+}
+
 // call runs a tool and decodes the result into a map, which is what the
 // model sees.
 func call(t *testing.T, set *agent.ToolSet, name, args string) map[string]any {
@@ -170,9 +179,11 @@ func TestNewRejectsMissingDependencies(t *testing.T) {
 	}
 }
 
-// The plan says six tools. A seventh one is a change of product, not a
-// refactor, so it should break a test on the way in.
-func TestThereAreExactlySixTools(t *testing.T) {
+// The tool list is the product's surface, so adding to it should break a
+// test on the way in rather than appear. The seventh gives a shopping
+// note the end it never had: a note is a one-time thing, and buying it
+// is what removes it.
+func TestThereAreExactlySevenTools(t *testing.T) {
 	set := newSet(t, &fakePantry{})
 
 	want := []string{
@@ -182,6 +193,7 @@ func TestThereAreExactlySixTools(t *testing.T) {
 		"update_item",
 		"shopping_list",
 		"add_shopping_note",
+		"remove_shopping_note",
 	}
 
 	tools := set.Tools()
@@ -230,9 +242,16 @@ func TestDescriptionsCarryTheRulesThatInvertTheObvious(t *testing.T) {
 		},
 		"update_item": {
 			"vence qualquer estimativa minha",
+			"não é recado",
 		},
 		"add_shopping_note": {
 			"não é estoque",
+			"de uma vez só",
+			"remove_shopping_note",
+		},
+		"remove_shopping_note": {
+			"vem em shopping_list",
+			"só para os recados",
 		},
 	}
 
@@ -241,6 +260,44 @@ func TestDescriptionsCarryTheRulesThatInvertTheObvious(t *testing.T) {
 			if !strings.Contains(tool.Description, phrase) {
 				t.Errorf("the description of %s no longer says %q", tool.Name, phrase)
 			}
+		}
+	}
+}
+
+// The three modes are two decisions in opposite directions plus the
+// default, and the sentences a person says map onto them in ways that
+// are easy to get backwards: "quero o arroz de volta na lista" reads
+// like always and is almost always auto. So the rule is written out in
+// the field's own description, and this is the test that keeps it there.
+func TestTheShoppingModeDescriptionSettlesWhatIsEasyToGetBackwards(t *testing.T) {
+	set := newSet(t, &fakePantry{})
+
+	var schema map[string]any
+	for _, tool := range set.Tools() {
+		if tool.Name == "update_item" {
+			schema = tool.Schema
+		}
+	}
+	mode, ok := schema["properties"].(map[string]any)["shopping_mode"].(map[string]any)
+	if !ok {
+		t.Fatal("update_item has no shopping_mode")
+	}
+	description, _ := mode["description"].(string)
+
+	want := []string{
+		// Going back to normal is auto, not always.
+		"são auto, não always",
+		// A pin is only for what is not already low.
+		"já está na lista",
+		// The one case only the item's current state can settle.
+		"Tira o X da lista",
+		"pergunte",
+		// The pin ends by itself.
+		"acaba sozinho",
+	}
+	for _, phrase := range want {
+		if !strings.Contains(description, phrase) {
+			t.Errorf("the shopping_mode description no longer says %q", phrase)
 		}
 	}
 }
@@ -271,6 +328,17 @@ func TestSchemaEnumsComeFromTheDomain(t *testing.T) {
 	if len(units) != len(domain.AllUnits()) {
 		t.Errorf("unit has %d options, the domain has %d", len(units), len(domain.AllUnits()))
 	}
+
+	var update map[string]any
+	for _, tool := range set.Tools() {
+		if tool.Name == "update_item" {
+			update = tool.Schema
+		}
+	}
+	modes := update["properties"].(map[string]any)["shopping_mode"].(map[string]any)["enum"].([]any)
+	if len(modes) != len(domain.AllShoppingModes()) {
+		t.Errorf("shopping_mode has %d options, the domain has %d", len(modes), len(domain.AllShoppingModes()))
+	}
 }
 
 // Rubbish is refused by the schema, before the handler and before any
@@ -291,6 +359,9 @@ func TestSchemaRefusesRubbishBeforeTheHandler(t *testing.T) {
 		{"fractional event id", "undo_event", `{"event_id":1.5}`},
 		{"no item", "update_item", `{"minimum":500}`},
 		{"note as number", "add_shopping_note", `{"text":7}`},
+		{"unknown shopping mode", "update_item", `{"item_id":"` + riceID + `","shopping_mode":"sometimes"}`},
+		{"note id as text", "remove_shopping_note", `{"note_id":"7"}`},
+		{"no note id", "remove_shopping_note", `{}`},
 		{"arguments to a tool that takes none", "list_inventory", `{"page":2}`},
 		{"not even JSON", "undo_event", `{`},
 	}
@@ -304,7 +375,7 @@ func TestSchemaRefusesRubbishBeforeTheHandler(t *testing.T) {
 				t.Fatal("the schema accepted it")
 			}
 
-			if len(pantry.recorded)+len(pantry.undone)+len(pantry.changes)+len(pantry.added) > 0 {
+			if len(pantry.recorded)+len(pantry.undone)+len(pantry.changes)+len(pantry.added)+len(pantry.removed) > 0 {
 				t.Error("the pantry was called with input the schema should have refused")
 			}
 		})

@@ -11,8 +11,8 @@ import (
 // a shape it owns: services.Pantry satisfies it without knowing it
 // exists, and a test satisfies it with a mock.
 //
-// Narrower than services.PantryService on purpose — GetByID, History and
-// RemoveNote have no tool, so they are not a dependency.
+// Narrower than services.PantryService on purpose — GetByID and History
+// have no tool, so they are not a dependency.
 type Pantry interface {
 	List(ctx context.Context) ([]domain.Item, error)
 	Record(ctx context.Context, in []domain.EventInput) ([]domain.Receipt, error)
@@ -20,4 +20,5 @@ type Pantry interface {
 	Update(ctx context.Context, change domain.ItemChange) (domain.Item, error)
 	ShoppingList(ctx context.Context) (domain.ShoppingList, error)
 	AddNote(ctx context.Context, text string) (domain.Note, error)
+	RemoveNote(ctx context.Context, id int64) (domain.Note, error)
 }

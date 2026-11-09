@@ -69,6 +69,10 @@ func (p *stubPantry) AddNote(_ context.Context, text string) (domain.Note, error
 	return domain.Note{ID: 1, Text: text}, p.err
 }
 
+func (p *stubPantry) RemoveNote(_ context.Context, id int64) (domain.Note, error) {
+	return domain.Note{ID: id, Text: "papel toalha"}, p.err
+}
+
 // connect runs the real server over an in-memory transport pair, so what
 // the tests below exercise is the wiring the host will use, not a copy
 // of it.
@@ -97,15 +101,15 @@ func connect(t *testing.T, pantry agent.Pantry) *mcp.ClientSession {
 
 // What the host lists is what the agent package defines, descriptions
 // and schemas included.
-func TestServerListsTheSixToolsWithTheirSchemas(t *testing.T) {
+func TestServerListsTheToolsWithTheirSchemas(t *testing.T) {
 	session := connect(t, &stubPantry{})
 
 	result, err := session.ListTools(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("tools/list failed: %v", err)
 	}
-	if len(result.Tools) != 6 {
-		t.Fatalf("the host sees %d tools, want 6", len(result.Tools))
+	if len(result.Tools) != 7 {
+		t.Fatalf("the host sees %d tools, want 7", len(result.Tools))
 	}
 
 	for _, tool := range result.Tools {

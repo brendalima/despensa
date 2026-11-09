@@ -495,3 +495,104 @@ func TestNothingLeftReadsAsAcabou(t *testing.T) {
 		}
 	}
 }
+
+// The level and the decision are two facts, so the line carries both.
+// An item nobody has decided anything about reads exactly as it did
+// before the mode existed, which is what the first case is for.
+func TestItemCarriesTheShoppingMode(t *testing.T) {
+	tests := []struct {
+		name   string
+		onHand domain.Amount
+		mode   domain.ShoppingMode
+		want   string
+	}{
+		{"plenty", 4600 * domain.Thousand, domain.ShoppingAuto, "arroz: 4,6 kg (≈26 taças)"},
+		{"low", 500 * domain.Thousand, domain.ShoppingAuto, "arroz: 500 g (≈3 taças) (no mínimo)"},
+		{"held back, plenty", 4600 * domain.Thousand, domain.ShoppingNever, "arroz: 4,6 kg (≈26 taças) (sem repor)"},
+		{"held back, low", 500 * domain.Thousand, domain.ShoppingNever, "arroz: 500 g (≈3 taças) (no mínimo, sem repor)"},
+		{"pinned", 4600 * domain.Thousand, domain.ShoppingAlways, "arroz: 4,6 kg (≈26 taças) (na lista)"},
+		{"held back, drifted", -100, domain.ShoppingNever, "arroz: 0 g (minha conta se perdeu — me diga quanto tem, sem repor)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			item := rice()
+			item.OnHand = tt.onHand
+			item.Shopping = tt.mode
+			if got := humanize.Item(item); got != tt.want {
+				t.Errorf("Item() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// Nothing is missing — the person asked to be reminded — so the entry
+// must not read as a shortage. When it is also low the level is the
+// news and says itself, which is the second case.
+func TestAPinnedItemReadsAsAReminder(t *testing.T) {
+	pinned := rice()
+	pinned.Shopping = domain.ShoppingAlways
+	list := domain.ShoppingList{Low: []domain.Item{pinned}}
+
+	if got := humanize.ShoppingList(list); !strings.Contains(got, "arroz — lembrete") {
+		t.Errorf("ShoppingList() =\n%s\nwant the reminder entry", got)
+	}
+	if got := humanize.DigestLine(list); !strings.Contains(got, "arroz (lembrete)") {
+		t.Errorf("DigestLine() = %q, want the compact reminder entry", got)
+	}
+
+	alsoLow := rice()
+	alsoLow.OnHand = 500 * domain.Thousand
+	alsoLow.Shopping = domain.ShoppingAlways
+	if got := humanize.ShoppingList(domain.ShoppingList{Low: []domain.Item{alsoLow}}); !strings.Contains(got, "restam 500 g") {
+		t.Errorf("ShoppingList() =\n%s\nwant the level, which is the news when it is low", got)
+	}
+}
+
+// Held back on purpose, so the alert must warn without claiming the
+// list changed — and it offers the way back, since the mode is the only
+// state and asking is how it is undone.
+func TestReceiptAlertDoesNotClaimTheListForAHeldBackItem(t *testing.T) {
+	item := rice()
+	item.OnHand = 900 * domain.Thousand
+	item.Shopping = domain.ShoppingNever
+
+	got := humanize.Receipt(domain.Receipt{
+		Item:             item,
+		Before:           1080 * domain.Thousand,
+		After:            900 * domain.Thousand,
+		CrossedThreshold: true,
+	})
+	if !strings.Contains(got, "Chegou no mínimo") {
+		t.Errorf("Receipt() =\n%s\nwant the low-stock line", got)
+	}
+	if strings.Contains(got, "entrou na lista de compras") {
+		t.Errorf("Receipt() =\n%s\nclaims the list changed, and it did not", got)
+	}
+	if !strings.Contains(got, "sem repor") {
+		t.Errorf("Receipt() =\n%s\nwant the way back", got)
+	}
+}
+
+// A line vanished from the shopping list in both cases, and silence
+// about it reads as the bot having lost the reminder.
+func TestReceiptExplainsTheLinesItRemoved(t *testing.T) {
+	item := rice()
+
+	cleared := humanize.Receipt(domain.Receipt{Item: item, Before: item.OnHand, After: item.OnHand, NoteCleared: true})
+	if !strings.Contains(cleared, "dos recados") {
+		t.Errorf("Receipt() =\n%s\nwant the note becoming an item", cleared)
+	}
+
+	unpinned := humanize.Receipt(domain.Receipt{Item: item, Before: item.OnHand, After: item.OnHand, PinCleared: true})
+	if !strings.Contains(unpinned, "lembrete") {
+		t.Errorf("Receipt() =\n%s\nwant the reminder ending", unpinned)
+	}
+}
+
+func TestNoteRemovedNamesWhatWent(t *testing.T) {
+	got := humanize.NoteRemoved(domain.Note{ID: 3, Text: "papel toalha"})
+	if !strings.Contains(got, "papel toalha") {
+		t.Errorf("NoteRemoved() = %q, want it to name the note", got)
+	}
+}

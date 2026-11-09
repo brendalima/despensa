@@ -440,11 +440,17 @@ func TestNotes(t *testing.T) {
 		t.Error("the note is not in the list")
 	}
 
-	if err := repo.RemoveNote(ctx, note.ID); err != nil {
+	// The row comes back, because being bought is a note's end and the
+	// answer the person gets names what went.
+	removed, err := repo.RemoveNote(ctx, note.ID)
+	if err != nil {
 		t.Fatalf("RemoveNote: %v", err)
 	}
+	if removed.ID != note.ID || removed.Text != note.Text {
+		t.Errorf("RemoveNote returned %+v, want %+v", removed, note)
+	}
 	var notFound *domain.NotFoundError
-	if err := repo.RemoveNote(ctx, note.ID); !errors.As(err, &notFound) {
+	if _, err := repo.RemoveNote(ctx, note.ID); !errors.As(err, &notFound) {
 		t.Errorf("removing it twice = %v, want *NotFoundError", err)
 	}
 }
@@ -454,4 +460,97 @@ func mustInTx(t *testing.T, repo *Pantry, fn func(PantryTx) error) {
 	if err := repo.InTx(context.Background(), fn); err != nil {
 		t.Fatalf("transaction: %v", err)
 	}
+}
+
+// The migration's default, proved on a real row rather than inferred
+// from the DDL: an item nobody has decided anything about follows its
+// minimum, the way every row did before the column existed.
+func TestAFreshItemFollowsTheMinimum(t *testing.T) {
+	repo := MustNewPantry(testDB(t))
+	ctx := context.Background()
+	item := newTestItem(t, repo)
+
+	stored, err := repo.GetByID(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if stored.Shopping != domain.ShoppingAuto {
+		t.Errorf("a fresh item is %q, want %q", stored.Shopping, domain.ShoppingAuto)
+	}
+}
+
+func TestShoppingModeRoundTrip(t *testing.T) {
+	repo := MustNewPantry(testDB(t))
+	ctx := context.Background()
+	item := newTestItem(t, repo)
+
+	for _, mode := range []domain.ShoppingMode{domain.ShoppingNever, domain.ShoppingAlways, domain.ShoppingAuto} {
+		// UpdateItem writes the whole row, SetShopping only this field:
+		// both have to land, since the pin clears itself through the
+		// narrow one.
+		item.Shopping = mode
+		mustInTx(t, repo, func(tx PantryTx) error { return tx.UpdateItem(ctx, item) })
+
+		stored, err := repo.GetByID(ctx, item.ID)
+		if err != nil {
+			t.Fatalf("GetByID: %v", err)
+		}
+		if stored.Shopping != mode {
+			t.Errorf("UpdateItem to %q read back as %q", mode, stored.Shopping)
+		}
+
+		mustInTx(t, repo, func(tx PantryTx) error { return tx.SetShopping(ctx, item.ID, mode) })
+		stored, err = repo.GetByID(ctx, item.ID)
+		if err != nil {
+			t.Fatalf("GetByID: %v", err)
+		}
+		if stored.Shopping != mode {
+			t.Errorf("SetShopping to %q read back as %q", mode, stored.Shopping)
+		}
+	}
+
+	err := repo.InTx(ctx, func(tx PantryTx) error {
+		return tx.SetShopping(ctx, uuid.New().String(), domain.ShoppingNever)
+	})
+	var notFound *domain.NotFoundError
+	if !errors.As(err, &notFound) {
+		t.Errorf("SetShopping on a missing item = %v, want *NotFoundError", err)
+	}
+}
+
+// The note and the item name the same thing, and the note is the one
+// with nothing behind it. The match ignores case and surrounding space,
+// because the text is whatever the person typed.
+func TestDeleteNotesNamed(t *testing.T) {
+	repo := MustNewPantry(testDB(t))
+	ctx := context.Background()
+
+	name := "teste-" + uuid.New().String()
+	note, err := repo.AddNote(ctx, "  "+strings.ToUpper(name)+" ")
+	if err != nil {
+		t.Fatalf("AddNote: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = repo.db.ExecContext(context.Background(), `DELETE FROM shopping_notes WHERE id = $1`, note.ID)
+	})
+
+	var removed int64
+	mustInTx(t, repo, func(tx PantryTx) error {
+		var err error
+		removed, err = tx.DeleteNotesNamed(ctx, name)
+		return err
+	})
+	if removed != 1 {
+		t.Errorf("DeleteNotesNamed removed %d, want 1", removed)
+	}
+
+	// Most items are created with no note waiting for them, so nothing
+	// matching is the normal case and not an error.
+	mustInTx(t, repo, func(tx PantryTx) error {
+		n, err := tx.DeleteNotesNamed(ctx, name)
+		if n != 0 {
+			t.Errorf("DeleteNotesNamed removed %d the second time, want 0", n)
+		}
+		return err
+	})
 }

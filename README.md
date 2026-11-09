@@ -41,6 +41,17 @@ below zero, it counted less than went in. The negative value is kept, shown as
 zero, and the bot asks how much is there — the only moment it asks for a number,
 and it asks for a guess, not a measurement.
 
+**The list is derived, and the person can still overrule it.** The shopping list
+is computed on every read — the items at or below their minimum — so it cannot
+disagree with the ledger. But *"I know the rice is low, I am not buying rice this
+month"* and *"the coffee is fine, buy some anyway"* are decisions the level
+cannot hold, so each item carries a `shopping_mode`: `auto` follows the minimum,
+`never` holds it back, `always` pins it on. A pin ends by itself, on the restock
+that clears the minimum, because "buy it anyway" is a one-time intent. The other
+half of the list is the recados — a one-time thing that is not pantry inventory,
+removed once it has been bought, and removed on its own if it ever becomes an
+item.
+
 **Nothing is confirmed before being written.** The blast radius is one row of a
 personal pantry, and the failure mode that kills this product is friction, so
 receipts carry the event id to undo instead of a confirmation prompt.
@@ -96,7 +107,7 @@ The repository tests talk to a real Postgres and **skip** without
 
 ## The tools, and trying them with a real model
 
-Phase B is the six tools (`internal/agent`) and an MCP server over stdio
+Phase B is the seven tools (`internal/agent`) and an MCP server over stdio
 (`cmd/mcp`). It comes before WhatsApp because it is free to try: the host is
 your own Claude Desktop or Claude Code, so the model calls are on your
 subscription and this binary holds no API key.
@@ -115,9 +126,12 @@ backwards:
 | *"usei uma concha de arroz"* (a new word) | the size is estimated, written down, and the second `concha` is worth the same |
 | *"usei um pouco de arroz"* | it asks, instead of inventing a number |
 | two items matching one word | it asks which, instead of guessing |
+| *"não quero repor arroz agora"* | `update_item` with `shopping_mode: never`, and rice leaves the list while staying in the pantry |
+| *"volta a repor arroz"* | `shopping_mode: auto` — **not** `always`: going back to normal is the minimum deciding again |
+| *"lembra de comprar café"*, with coffee full | `shopping_mode: always`, not a recado; buying a packet puts it back to `auto` |
 
 The tools know nothing about MCP, and that is the point: `cmd/mcp` and the
-WhatsApp bot hand the same six tools, with the same wording, to two different
+WhatsApp bot hand the same seven tools, with the same wording, to two different
 SDKs. The day they disagree about what a `taça` is worth is the day the
 inventory is wrong, so the architecture test fails the build if `internal/agent`
 imports an SDK, and a golden test fails if the two sentences that invert what a
@@ -130,7 +144,7 @@ it corrupts the session rather than showing up as a log.
 ## The bot
 
 Phase C is the WhatsApp bot: `cmd/api` serves the webhook, `internal/bot` is the
-conversation, and the same six tools do the work. There is no HTTP between them
+conversation, and the same seven tools do the work. There is no HTTP between them
 and the pantry — one service, one household, so the tools call the services in
 process.
 
@@ -223,7 +237,9 @@ fly machine run --schedule weekly --command /app/digest <image>
 
 Low-stock alerts need none of this. `Receipt.CrossedThreshold` is a *moment*,
 not a state, so it rides out on the reply to the message that caused it: no
-scheduled job, no template, no cost.
+scheduled job, no template, no cost. It fires for a held-back item too — the
+level is a fact and the mode is a decision — but then the line says so instead
+of claiming the item went on a list it is not on.
 
 ## State
 

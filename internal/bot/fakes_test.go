@@ -115,6 +115,10 @@ func (p *fakePantry) AddNote(_ context.Context, text string) (domain.Note, error
 	return domain.Note{ID: 1, Text: text}, nil
 }
 
+func (p *fakePantry) RemoveNote(_ context.Context, id int64) (domain.Note, error) {
+	return domain.Note{ID: id, Text: "fermento"}, nil
+}
+
 // fakeModel answers from a script and counts the calls, which is how
 // "zero model calls" is asserted rather than hoped for.
 type fakeModel struct {

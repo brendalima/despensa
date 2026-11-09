@@ -63,6 +63,8 @@ type fakeRepo struct {
 	onHand   map[string]domain.Amount
 	undone   []int64
 	aliases  map[string][]string
+	shopping map[string]domain.ShoppingMode
+	cleared  []string
 
 	commits   int
 	rollbacks int
@@ -72,10 +74,11 @@ type fakeRepo struct {
 
 func newFakeRepo(items ...domain.Item) *fakeRepo {
 	r := &fakeRepo{
-		items:   map[string]domain.Item{},
-		events:  map[int64]domain.Event{},
-		onHand:  map[string]domain.Amount{},
-		aliases: map[string][]string{},
+		items:    map[string]domain.Item{},
+		events:   map[int64]domain.Event{},
+		onHand:   map[string]domain.Amount{},
+		aliases:  map[string][]string{},
+		shopping: map[string]domain.ShoppingMode{},
 	}
 	for _, item := range items {
 		r.items[item.ID] = item
@@ -88,14 +91,18 @@ func (r *fakeRepo) InTx(ctx context.Context, fn func(repository.PantryTx) error)
 	for k, v := range r.items {
 		snapshot[k] = v
 	}
+	notes := append([]domain.Note(nil), r.notes...)
 
 	if err := fn(&fakeTx{repo: r}); err != nil {
 		// A real transaction leaves nothing behind; the fake has to be
 		// just as unforgiving, or a test would pass on a half write.
 		r.items = snapshot
+		r.notes = notes
 		r.created = nil
 		r.portions = nil
 		r.onHand = map[string]domain.Amount{}
+		r.shopping = map[string]domain.ShoppingMode{}
+		r.cleared = nil
 		r.rollbacks++
 		return err
 	}
@@ -143,7 +150,15 @@ func (r *fakeRepo) AddNote(ctx context.Context, text string) (domain.Note, error
 	return n, nil
 }
 
-func (r *fakeRepo) RemoveNote(ctx context.Context, id int64) error { return nil }
+func (r *fakeRepo) RemoveNote(ctx context.Context, id int64) (domain.Note, error) {
+	for i, n := range r.notes {
+		if n.ID == id {
+			r.notes = append(r.notes[:i:i], r.notes[i+1:]...)
+			return n, nil
+		}
+	}
+	return domain.Note{}, domain.NewNotFoundError("shopping note not found")
+}
 
 type fakeTx struct {
 	repo *fakeRepo
@@ -213,6 +228,39 @@ func (t *fakeTx) SetOnHand(ctx context.Context, itemID string, onHand domain.Amo
 	t.repo.items[itemID] = item
 	t.repo.onHand[itemID] = onHand
 	return nil
+}
+
+func (t *fakeTx) SetShopping(ctx context.Context, itemID string, mode domain.ShoppingMode) error {
+	if t.repo.failOn == "SetShopping" {
+		return errors.New("database down")
+	}
+	item, ok := t.repo.items[itemID]
+	if !ok {
+		return domain.NewNotFoundError("item not found")
+	}
+	item.Shopping = mode
+	t.repo.items[itemID] = item
+	t.repo.shopping[itemID] = mode
+	return nil
+}
+
+func (t *fakeTx) DeleteNotesNamed(ctx context.Context, name string) (int64, error) {
+	if t.repo.failOn == "DeleteNotesNamed" {
+		return 0, errors.New("database down")
+	}
+	t.repo.cleared = append(t.repo.cleared, name)
+
+	kept := make([]domain.Note, 0, len(t.repo.notes))
+	var removed int64
+	for _, n := range t.repo.notes {
+		if equalFold(strings.TrimSpace(n.Text), strings.TrimSpace(name)) {
+			removed++
+			continue
+		}
+		kept = append(kept, n)
+	}
+	t.repo.notes = kept
+	return removed, nil
 }
 
 func (t *fakeTx) UpsertPortion(ctx context.Context, itemID string, p domain.Portion) error {
@@ -833,6 +881,7 @@ func TestCorrectedPortionSurvivesLaterHint(t *testing.T) {
 func TestUpdateRefusals(t *testing.T) {
 	bad := domain.Amount(-1)
 	empty := ""
+	unknownMode := domain.ShoppingMode("sometimes")
 	tests := []struct {
 		name   string
 		change domain.ItemChange
@@ -842,6 +891,7 @@ func TestUpdateRefusals(t *testing.T) {
 		{"empty name", domain.ItemChange{ItemID: riceID(), Name: &empty}},
 		{"portion worth nothing", domain.ItemChange{ItemID: riceID(), Portions: []domain.Portion{{Name: "taça", One: 0}}}},
 		{"unknown item", domain.ItemChange{ItemID: "33333333-3333-3333-3333-333333333333", Aliases: []string{"x"}}},
+		{"unknown shopping mode", domain.ItemChange{ItemID: riceID(), Shopping: &unknownMode}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -981,4 +1031,183 @@ func TestRecordCreatesEmptyItem(t *testing.T) {
 	if !receipts[0].ItemCreated || receipts[0].After != 0 {
 		t.Errorf("receipt = %+v, want a created item holding nothing", receipts[0])
 	}
+}
+
+// The list is where the level and the person's decision meet, and it is
+// the only place "what to buy" is defined — the weekly digest reads it
+// through this same call.
+func TestShoppingListObeysTheShoppingMode(t *testing.T) {
+	heldBack := rice()
+	heldBack.OnHand = 500 * domain.Thousand // under its 1000 g minimum
+	heldBack.Shopping = domain.ShoppingNever
+
+	pinned := bread() // well above its minimum
+	pinned.Shopping = domain.ShoppingAlways
+
+	svc := services.MustNewPantry(newFakeRepo(heldBack, pinned))
+	list, err := svc.ShoppingList(context.Background())
+	if err != nil {
+		t.Fatalf("ShoppingList: %v", err)
+	}
+	if len(list.Low) != 1 || list.Low[0].Name != "pão de forma" {
+		t.Fatalf("Low = %v, want only the pinned bread", names(list.Low))
+	}
+}
+
+func TestUpdateSetsTheShoppingMode(t *testing.T) {
+	repo := newFakeRepo(rice())
+	svc := services.MustNewPantry(repo)
+
+	for _, mode := range []domain.ShoppingMode{domain.ShoppingNever, domain.ShoppingAlways, domain.ShoppingAuto} {
+		item, err := svc.Update(context.Background(), domain.ItemChange{ItemID: riceID(), Shopping: &mode})
+		if err != nil {
+			t.Fatalf("Update to %q: %v", mode, err)
+		}
+		if item.Shopping != mode {
+			t.Errorf("Update to %q left the item at %q", mode, item.Shopping)
+		}
+	}
+}
+
+// "Buy it anyway" is a one-time intent, so the purchase is its end —
+// but only a purchase that clears the minimum. Using one slice of a
+// pinned loaf is not the person having bought bread.
+func TestRestockClearsThePinOnlyWhenItClearsTheMinimum(t *testing.T) {
+	tests := []struct {
+		name       string
+		kind       domain.EventKind
+		onHand     domain.Amount
+		qty        domain.Qty
+		wantMode   domain.ShoppingMode
+		wantReport bool
+	}{
+		{"bought a package", domain.EventRestock, 5000 * domain.Thousand, domain.QtyOf(1), domain.ShoppingAuto, true},
+		{"bought a cup, still low", domain.EventRestock, 0, domain.QtyOf(1), domain.ShoppingAlways, false},
+		{"used a cup", domain.EventConsume, 5000 * domain.Thousand, domain.QtyOf(1), domain.ShoppingAlways, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pinned := rice()
+			pinned.OnHand = tt.onHand
+			pinned.Shopping = domain.ShoppingAlways
+
+			portion := "pacote"
+			if tt.kind == domain.EventConsume || tt.onHand == 0 {
+				portion = "taça"
+			}
+
+			repo := newFakeRepo(pinned)
+			svc := services.MustNewPantry(repo)
+			receipts, err := svc.Record(context.Background(), []domain.EventInput{{
+				ItemID:      riceID(),
+				Kind:        tt.kind,
+				PortionName: portion,
+				PortionQty:  tt.qty,
+				Source:      domain.SourceCLI,
+			}})
+			if err != nil {
+				t.Fatalf("Record: %v", err)
+			}
+
+			if got := repo.items[riceID()].Shopping; got != tt.wantMode {
+				t.Errorf("the stored mode is %q, want %q", got, tt.wantMode)
+			}
+			if receipts[0].PinCleared != tt.wantReport {
+				t.Errorf("PinCleared = %v, want %v", receipts[0].PinCleared, tt.wantReport)
+			}
+			if receipts[0].Item.Shopping != tt.wantMode {
+				t.Errorf("the receipt carries %q, want %q", receipts[0].Item.Shopping, tt.wantMode)
+			}
+		})
+	}
+}
+
+// A note and an item naming the same thing ask for the same purchase
+// twice, and the note is the one with nothing behind it. This is the
+// collision the real pantry hit with "papel toalha".
+func TestCreatingAnItemClearsANoteNamingIt(t *testing.T) {
+	repo := newFakeRepo()
+	repo.notes = []domain.Note{{ID: 1, Text: "Papel Toalha"}, {ID: 2, Text: "fermento"}}
+	svc := services.MustNewPantry(repo)
+
+	receipts, err := svc.Record(context.Background(), []domain.EventInput{{
+		NewItem: &domain.NewItem{
+			Name:     "papel toalha",
+			Unit:     domain.UnitPiece,
+			Portions: []domain.Portion{{Name: "rolo", One: domain.Thousand}},
+		},
+		Kind:        domain.EventRestock,
+		PortionName: "rolo",
+		PortionQty:  domain.QtyOf(2),
+		Source:      domain.SourceCLI,
+	}})
+	if err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	if !receipts[0].NoteCleared {
+		t.Error("NoteCleared = false, so the person is never told the line went")
+	}
+	if len(repo.notes) != 1 || repo.notes[0].Text != "fermento" {
+		t.Errorf("notes = %v, want only fermento", repo.notes)
+	}
+}
+
+// Same transaction, which is the whole point: a batch that fails on its
+// second entry must leave the note where it was.
+func TestAFailedBatchPutsTheNoteBack(t *testing.T) {
+	repo := newFakeRepo()
+	repo.notes = []domain.Note{{ID: 1, Text: "papel toalha"}}
+	svc := services.MustNewPantry(repo)
+
+	_, err := svc.Record(context.Background(), []domain.EventInput{
+		{
+			NewItem: &domain.NewItem{
+				Name:     "papel toalha",
+				Unit:     domain.UnitPiece,
+				Portions: []domain.Portion{{Name: "rolo", One: domain.Thousand}},
+			},
+			Kind:        domain.EventRestock,
+			PortionName: "rolo",
+			PortionQty:  domain.QtyOf(2),
+			Source:      domain.SourceCLI,
+		},
+		{ItemID: "44444444-4444-4444-4444-444444444444", Kind: domain.EventConsume, PortionName: "taça", PortionQty: domain.QtyOf(1), Source: domain.SourceCLI},
+	})
+	if err == nil {
+		t.Fatal("Record succeeded, want the second entry to fail")
+	}
+	if len(repo.notes) != 1 {
+		t.Errorf("notes = %v, want the note back after the rollback", repo.notes)
+	}
+}
+
+// Held back on purpose, and still low: the alert is about the level, so
+// it still fires. What changes is the sentence, which is humanize's job.
+func TestAHeldBackItemStillReportsCrossingTheMinimum(t *testing.T) {
+	heldBack := rice()
+	heldBack.Shopping = domain.ShoppingNever
+	svc := services.MustNewPantry(newFakeRepo(heldBack))
+
+	receipts, err := svc.Record(context.Background(), []domain.EventInput{{
+		ItemID:      riceID(),
+		Kind:        domain.EventCorrection,
+		PortionName: "taça",
+		PortionQty:  domain.QtyOf(1),
+		Source:      domain.SourceCLI,
+	}})
+	if err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	if !receipts[0].CrossedThreshold {
+		t.Error("CrossedThreshold = false: the mode moved the level, which it must not")
+	}
+}
+
+func names(items []domain.Item) []string {
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		out = append(out, item.Name)
+	}
+	return out
 }
