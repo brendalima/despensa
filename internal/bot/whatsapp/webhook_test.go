@@ -167,6 +167,51 @@ func TestParseReadsWhatCanBeActedOn(t *testing.T) {
 	}
 }
 
+// A voice note carries an id and a mime type, never the bytes. Meta
+// appends codec parameters to the type and nothing downstream wants
+// them, so they are dropped here.
+func TestParseReadsAVoiceNote(t *testing.T) {
+	w := newWebhook(t)
+
+	body := []byte(`{
+	  "entry": [{"changes": [{"field": "messages", "value": {"messages": [
+	    {"id": "wamid.1", "from": "5511999990000", "type": "audio",
+	     "audio": {"id": "media-1", "mime_type": "audio/ogg; codecs=opus", "voice": true}},
+	    {"id": "wamid.2", "from": "5511999990000", "type": "audio",
+	     "audio": {"id": "media-2", "mime_type": "audio/mpeg", "voice": false}},
+	    {"id": "wamid.3", "from": "5511999990000", "type": "audio", "audio": {"mime_type": "audio/ogg"}}
+	  ]}}]}]
+	}`)
+
+	delivery, err := w.Parse(body)
+	if err != nil {
+		t.Fatalf("couldn't parse the payload: %v", err)
+	}
+	// The third has no id, so there is nothing to fetch and nothing to
+	// act on: it is skipped like a photo.
+	if len(delivery.Messages) != 2 {
+		t.Fatalf("parsed %d messages, want 2: %+v", len(delivery.Messages), delivery.Messages)
+	}
+
+	note := delivery.Messages[0]
+	if note.Audio == nil {
+		t.Fatalf("the voice note came through without its audio: %+v", note)
+	}
+	if note.Audio.MediaID != "media-1" || note.Audio.MediaType != "audio/ogg" {
+		t.Errorf("the audio read as %+v", note.Audio)
+	}
+	if note.Text != "" || note.Choice != "" {
+		t.Errorf("a voice note carried words or a tap: %+v", note)
+	}
+
+	// A voice recording and an attached file are the same message
+	// here: both are a sentence nobody typed.
+	file := delivery.Messages[1]
+	if file.Audio == nil || file.Audio.MediaType != "audio/mpeg" {
+		t.Errorf("the attached audio read as %+v", file.Audio)
+	}
+}
+
 func TestParseRefusesRubbish(t *testing.T) {
 	w := newWebhook(t)
 

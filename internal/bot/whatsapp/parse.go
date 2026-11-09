@@ -45,6 +45,15 @@ type message struct {
 		} `json:"button_reply"`
 	} `json:"interactive"`
 
+	// Audio is a voice note or an attached audio file. Meta sends an
+	// id and a mime type, never the bytes: whoever wants the sound
+	// has to ask for it in a second request.
+	Audio struct {
+		ID       string `json:"id"`
+		MimeType string `json:"mime_type"`
+		Voice    bool   `json:"voice"`
+	} `json:"audio"`
+
 	// Button is the older, template-reply shape. Its payload is what
 	// the template put there, so it carries an id the same way.
 	Button struct {
@@ -69,6 +78,7 @@ type status struct {
 
 const (
 	typeText        = "text"
+	typeAudio       = "audio"
 	typeInteractive = "interactive"
 	typeButton      = "button"
 
@@ -132,14 +142,36 @@ func (m message) toBot() (bot.Message, bool) {
 	switch m.Type {
 	case typeText:
 		msg.Text = strings.TrimSpace(m.Text.Body)
+	case typeAudio:
+		// Voice or file, it is the same message: both are a sentence
+		// nobody typed, and both cost a transcription before the model
+		// can read them.
+		if m.Audio.ID != "" {
+			msg.Audio = &bot.Audio{
+				MediaID:   m.Audio.ID,
+				MediaType: mediaTypeOf(m.Audio.MimeType, "audio/ogg"),
+			}
+		}
 	case typeInteractive:
 		msg.Choice = m.Interactive.ButtonReply.ID
 	case typeButton:
 		msg.Choice = m.Button.Payload
 	}
 
-	if msg.Text == "" && msg.Choice == "" {
+	if msg.Text == "" && msg.Choice == "" && msg.Audio == nil {
 		return bot.Message{}, false
 	}
 	return msg, true
+}
+
+// mediaTypeOf drops the parameters Meta appends — a voice note arrives
+// as "audio/ogg; codecs=opus" — because everything downstream switches
+// on the base type alone.
+func mediaTypeOf(mimetype, fallback string) string {
+	base, _, _ := strings.Cut(mimetype, ";")
+	base = strings.ToLower(strings.TrimSpace(base))
+	if base == "" {
+		return fallback
+	}
+	return base
 }

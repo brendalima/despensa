@@ -32,6 +32,21 @@ type Webhook interface {
 	Parse(body []byte) (Delivery, error)
 }
 
+// MediaFetcher brings down an attachment the webhook only named. The
+// provider sends an id, not bytes: the fetch is a second trip, and it
+// is deliberately not made before the message is claimed.
+type MediaFetcher interface {
+	Fetch(ctx context.Context, mediaID string) (data []byte, mediaType string, err error)
+}
+
+// Transcriber turns audio into the sentence the model reads. It is a
+// port because it is the one step in a message that is billed by the
+// second and cannot be undone — a test has to be able to count the
+// calls.
+type Transcriber interface {
+	Transcribe(ctx context.Context, audio []byte, mediaType string) (string, error)
+}
+
 // Model is the model, narrowed to what a conversation needs. It is a
 // port so the loop's rules — the allowed list, the iteration cap, the
 // button that skips the model — can be tested without a key and

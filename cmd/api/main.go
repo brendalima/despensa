@@ -22,6 +22,7 @@ import (
 	"github.com/brendalima/despensa/internal/bot"
 	"github.com/brendalima/despensa/internal/bot/claude"
 	"github.com/brendalima/despensa/internal/bot/whatsapp"
+	"github.com/brendalima/despensa/internal/bot/whisper"
 	"github.com/brendalima/despensa/internal/core/domain"
 	"github.com/brendalima/despensa/internal/core/services"
 	"github.com/brendalima/despensa/internal/repository"
@@ -79,6 +80,7 @@ func run() error {
 		PhoneNumberID: cfg.WhatsApp.PhoneNumberID,
 		AccessToken:   cfg.WhatsApp.AccessToken,
 	})
+	media := whatsapp.MustNewMedia(whatsapp.MediaInput{AccessToken: cfg.WhatsApp.AccessToken})
 	webhook := whatsapp.MustNewWebhook(cfg.WhatsApp.VerifyToken, cfg.WhatsApp.AppSecret)
 
 	theBot := bot.MustNew(bot.Input{
@@ -87,6 +89,8 @@ func run() error {
 		Messenger:      messenger,
 		Chat:           cService,
 		Digests:        dService,
+		Media:          media,
+		Ears:           transcriberOf(cfg),
 		AllowedNumbers: cfg.WhatsApp.AllowedNumbers,
 		MaxIterations:  cfg.Anthropic.MaxToolIterations,
 	})
@@ -102,6 +106,7 @@ func run() error {
 
 	slog.Info("serving the pantry over whatsapp",
 		"addr", cfg.Addr(), "env", cfg.Env, "model", cfg.Anthropic.Model,
+		"transcriber", cfg.Transcription.Model,
 		"tools", len(tools.Tools()), "numbers", len(cfg.WhatsApp.AllowedNumbers))
 
 	if err := serve(ctx, cfg.Addr(), mux, rWhats.Wait); err != nil {
@@ -109,6 +114,31 @@ func run() error {
 	}
 	slog.Info("stopped")
 	return nil
+}
+
+// transcriberOf is the voice-note path, or a stand-in that says so.
+//
+// A nil interface here would be a panic on the first audio, in the one
+// branch nobody exercises locally. A null object instead turns a
+// missing key into the line the person already gets when a
+// transcription fails, and into a warning at boot for whoever has to
+// explain why.
+func transcriberOf(cfg adapters.APIConfig) bot.Transcriber {
+	if cfg.Transcription.APIKey == "" {
+		slog.Warn("no OPENAI_API_KEY is set: voice notes will be answered with a request for text")
+		return unavailable{errors.New("no transcriber is configured: set OPENAI_API_KEY")}
+	}
+	return whisper.MustNew(whisper.Input{
+		APIKey: cfg.Transcription.APIKey,
+		Model:  cfg.Transcription.Model,
+	})
+}
+
+// unavailable is a transcriber that is not there.
+type unavailable struct{ err error }
+
+func (u unavailable) Transcribe(context.Context, []byte, string) (string, error) {
+	return "", u.err
 }
 
 // serve runs until the context is cancelled, then stops taking

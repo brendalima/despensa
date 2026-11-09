@@ -192,8 +192,10 @@ func TestHistoryReachesTheModel(t *testing.T) {
 	}
 }
 
-// A photo, an audio, a tap on something that is gone: nothing to act
-// on, and no reason to pay for a model call to find that out.
+// A photo, a tap on something that is gone: nothing to act on, and no
+// reason to pay for a model call to find that out. An audio is no
+// longer in this list — it has words in it, they just have to be
+// fetched first.
 func TestMessageWithNothingInItNeverReachesTheModel(t *testing.T) {
 	h := newHarness(t, answer("pronto"))
 
@@ -435,5 +437,113 @@ func TestEveryEntryInTheListIsNormalised(t *testing.T) {
 
 	if got := h.messenger.last(t).text; got == humanize.NotForYou() {
 		t.Error("a number written with spaces and punctuation in the configuration was not matched")
+	}
+}
+
+// An audio is a sentence nobody typed. Once it is heard, the message
+// is indistinguishable from a typed one: the model reads the
+// transcript, and the answer is the ordinary receipt.
+func TestAnAudioReachesTheModelAsTheWordsInIt(t *testing.T) {
+	h := newHarness(t, answer("anotei uma taça de arroz"))
+	h.ears.text = "usei uma taça de arroz"
+
+	h.bot.Handle(context.Background(), voice(mine, messageID))
+
+	if h.model.calls() != 1 {
+		t.Fatalf("the model was called %d times", h.model.calls())
+	}
+	turns := h.model.requests[0].Turns
+	if got := turns[len(turns)-1].Text; got != "usei uma taça de arroz" {
+		t.Errorf("the model read %q", got)
+	}
+	if got := h.messenger.last(t); got.text != "anotei uma taça de arroz" {
+		t.Errorf("answered %q", got.text)
+	}
+}
+
+// The media type travels with the bytes: the transcriber picks its
+// decoder from it, and an audio offered as nothing at all is refused
+// by the API.
+func TestTheTranscriberIsToldWhatKindOfAudioItIs(t *testing.T) {
+	h := newHarness(t, answer("pronto"))
+	h.media.mediaType = "audio/mpeg"
+
+	h.bot.Handle(context.Background(), voice(mine, messageID))
+
+	if len(h.ears.heard) != 1 || h.ears.heard[0] != "audio/mpeg" {
+		t.Errorf("the transcriber heard %v", h.ears.heard)
+	}
+	if len(h.media.fetched) != 1 || h.media.fetched[0] != "media-"+messageID {
+		t.Errorf("fetched %v", h.media.fetched)
+	}
+}
+
+// A transcription that fails is not a failure of the pantry. The
+// person is asked for text, the model is never called, and nothing is
+// written.
+func TestAnAudioThatCannotBeHeardAsksForText(t *testing.T) {
+	h := newHarness(t, answer("pronto"))
+	h.ears.err = errors.New("the transcriber heard nothing")
+
+	h.bot.Handle(context.Background(), voice(mine, messageID))
+
+	if h.model.calls() != 0 {
+		t.Errorf("the model was called %d times for an audio nobody heard", h.model.calls())
+	}
+	if len(h.recorded()) != 0 {
+		t.Errorf("an unheard audio wrote %d events", len(h.recorded()))
+	}
+	if got := h.messenger.last(t); got.text != humanize.CouldntHear() {
+		t.Errorf("answered %q", got.text)
+	}
+}
+
+// A download that fails answers the same way: from where the person
+// stands there is no difference between an audio that did not arrive
+// and one that was not understood.
+func TestAnAudioThatCannotBeFetchedAsksForText(t *testing.T) {
+	h := newHarness(t, answer("pronto"))
+	h.media.err = errors.New("the media api answered 404")
+
+	h.bot.Handle(context.Background(), voice(mine, messageID))
+
+	if h.ears.calls != 0 {
+		t.Errorf("the transcriber was called %d times without any bytes", h.ears.calls)
+	}
+	if got := h.messenger.last(t); got.text != humanize.CouldntHear() {
+		t.Errorf("answered %q", got.text)
+	}
+}
+
+// Meta redelivers anything it is not told arrived in time. The claim
+// comes before the download and before the transcription precisely so
+// that the second copy of a voice note costs nothing.
+func TestARedeliveredAudioIsNeverTranscribedTwice(t *testing.T) {
+	h := newHarness(t, answer("pronto"), answer("pronto"))
+
+	h.bot.Handle(context.Background(), voice(mine, messageID))
+	h.bot.Handle(context.Background(), voice(mine, messageID))
+
+	if h.ears.calls != 1 {
+		t.Errorf("the transcriber was called %d times for one voice note", h.ears.calls)
+	}
+	if len(h.media.fetched) != 1 {
+		t.Errorf("the audio was fetched %d times", len(h.media.fetched))
+	}
+}
+
+// An audio from a number outside the list costs nothing at all: not a
+// download, not a transcription, not a model call.
+func TestAnAudioFromAStrangerCostsNothing(t *testing.T) {
+	h := newHarness(t, answer("pronto"))
+
+	h.bot.Handle(context.Background(), voice(stranger, messageID))
+
+	if len(h.media.fetched) != 0 || h.ears.calls != 0 || h.model.calls() != 0 {
+		t.Errorf("a stranger's audio cost %d fetches, %d transcriptions and %d model calls",
+			len(h.media.fetched), h.ears.calls, h.model.calls())
+	}
+	if got := h.messenger.last(t); got.text != humanize.NotForYou() {
+		t.Errorf("answered %q", got.text)
 	}
 }
