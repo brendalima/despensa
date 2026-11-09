@@ -32,12 +32,30 @@ func Receipt(r domain.Receipt) string {
 		b.WriteString(Quantity(unitOnly(r.Item), r.PortionLearned.One))
 		b.WriteString(". Se estiver muito fora, me diga o valor certo.")
 	}
+	// A line disappeared from the shopping list, so say why. Silence
+	// here reads as the bot having lost the reminder.
+	if r.NoteCleared {
+		b.WriteString("\nTirei \"")
+		b.WriteString(r.Item.Name)
+		b.WriteString("\" dos recados — agora é item da despensa.")
+	}
+	if r.PinCleared {
+		b.WriteString("\nComprado: tirei ")
+		b.WriteString(r.Item.Name)
+		b.WriteString(" da lista, era só um lembrete.")
+	}
 	// Riding along on the reply is why this needs no scheduled job and
 	// no approved message template.
 	if r.CrossedThreshold && !r.Drifted {
 		b.WriteString("\n⚠️ Chegou no mínimo: ")
 		b.WriteString(r.Item.Name)
-		b.WriteString(" entrou na lista de compras.")
+		// Held back on purpose, so the alert must not claim the list
+		// changed. It offers the way back instead.
+		if r.Item.HeldBack() {
+			b.WriteString(", mas está sem repor. Me diz se quer de volta na lista.")
+		} else {
+			b.WriteString(" entrou na lista de compras.")
+		}
 	}
 	if r.Drifted {
 		b.WriteString("\nPela minha conta ")
@@ -124,6 +142,8 @@ func digestEntries(l domain.ShoppingList) []string {
 	entries := make([]string, 0, len(l.Low)+len(l.Notes))
 	for _, item := range l.Low {
 		switch {
+		case item.Pinned() && !item.BelowThreshold():
+			entries = append(entries, item.Name+" (lembrete)")
 		case item.Drifted():
 			// The hedge survives the shortening. A drifted item is the
 			// one case where the number is known to be wrong, it is
@@ -148,6 +168,10 @@ func listEntries(l domain.ShoppingList) []string {
 	entries := make([]string, 0, len(l.Low)+len(l.Notes))
 	for _, item := range l.Low {
 		switch {
+		// Nothing is missing: the person asked to be reminded. When it
+		// is also low, the level is the news and says itself below.
+		case item.Pinned() && !item.BelowThreshold():
+			entries = append(entries, item.Name+" — lembrete")
 		case item.Drifted():
 			entries = append(entries, item.Name+" — acabou (ou minha conta se perdeu)")
 		case item.OnHand == 0:
@@ -179,17 +203,38 @@ func clip(s string, limit int) string {
 	return string(runes[:limit-1]) + "…"
 }
 
-// Item renders one line of the pantry.
+// Item renders one line of the pantry: the level, then whatever about
+// it is worth knowing, in one parenthesis.
+//
+// The level and the decision are two different facts, so a held-back
+// item says so whether or not it is low — otherwise the line reads "no
+// mínimo" and the list it is missing from looks like a bug.
 func Item(item domain.Item) string {
 	line := item.Name + ": " + Level(item, item.OnHand)
+
+	notes := make([]string, 0, 2)
 	switch {
 	case item.Drifted():
-		return line + " (minha conta se perdeu — me diga quanto tem)"
+		notes = append(notes, "minha conta se perdeu — me diga quanto tem")
 	case item.BelowThreshold():
-		return line + " (no mínimo)"
-	default:
+		notes = append(notes, "no mínimo")
+	}
+	switch {
+	case item.HeldBack():
+		notes = append(notes, "sem repor")
+	case item.Pinned():
+		notes = append(notes, "na lista")
+	}
+
+	if len(notes) == 0 {
 		return line
 	}
+	return line + " (" + strings.Join(notes, ", ") + ")"
+}
+
+// NoteRemoved answers the one-time thing being crossed off.
+func NoteRemoved(note domain.Note) string {
+	return "Tirei \"" + note.Text + "\" da lista."
 }
 
 // Error turns a domain error into something the person can act on.

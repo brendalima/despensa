@@ -31,6 +31,13 @@ type itemView struct {
 	Low     bool `json:"low,omitempty"`
 	Drifted bool `json:"drifted,omitempty"`
 
+	// Shopping is the person's standing decision about the list, left
+	// out when it is 'auto'. Low stays a fact about the level, so a
+	// held-back item reads low: true with never beside it: the model
+	// sees the level and the decision separately, which is what lets it
+	// answer "tira o arroz da lista" correctly.
+	Shopping string `json:"shopping_mode,omitempty"`
+
 	Text string `json:"text"`
 }
 
@@ -61,6 +68,12 @@ type noteView struct {
 	Text string `json:"text"`
 }
 
+type removedNoteView struct {
+	ID      int64  `json:"id"`
+	Removed string `json:"removed"`
+	Text    string `json:"text"`
+}
+
 func toItemView(item domain.Item) itemView {
 	portions := make([]portionView, 0, len(item.Portions))
 	for _, p := range item.Portions {
@@ -78,8 +91,18 @@ func toItemView(item domain.Item) itemView {
 		Portions: portions,
 		Low:      item.BelowThreshold(),
 		Drifted:  item.Drifted(),
+		Shopping: shoppingModeName(item.Shopping),
 		Text:     humanize.Item(item),
 	}
+}
+
+// shoppingModeName leaves out the default, so the field appears only
+// when there is a decision behind it.
+func shoppingModeName(mode domain.ShoppingMode) string {
+	if mode.OrAuto() == domain.ShoppingAuto {
+		return ""
+	}
+	return string(mode)
 }
 
 func toItemViews(items []domain.Item) []itemView {

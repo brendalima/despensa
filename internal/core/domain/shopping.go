@@ -2,10 +2,15 @@ package domain
 
 import "time"
 
-// Note is a line on the shopping list that is not inventory: the things
-// bought once in a while and never counted. Tracking those as items with
-// portions would be work for no gain, and work is what kills this
-// product.
+// Note is a line on the shopping list that is not inventory: a one-time
+// thing to buy, with no quantity, no portions and no ledger behind it.
+// Giving it those would mean inventing a unit for something nobody will
+// ever count again, and work is what kills this product.
+//
+// So a note has an end the computed half of the list does not need: it
+// is removed once the thing has been bought. An item that reaches its
+// minimum again comes back on its own, while a note that nothing clears
+// asks forever for something already in the cupboard.
 type Note struct {
 	ID        int64
 	Text      string

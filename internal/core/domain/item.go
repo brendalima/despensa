@@ -30,6 +30,48 @@ func (u Unit) Valid() bool {
 	return false
 }
 
+// ShoppingMode is what an item wants from the shopping list, which is
+// the one thing about an item that is a decision rather than a fact.
+type ShoppingMode string
+
+const (
+	// ShoppingAuto follows the minimum, which is what every item does
+	// until the person says otherwise.
+	ShoppingAuto ShoppingMode = "auto"
+	// ShoppingNever keeps an item off the list even when it is low: "I
+	// know the rice is low, I am not buying rice now."
+	ShoppingNever ShoppingMode = "never"
+	// ShoppingAlways keeps an item on the list even when it is full:
+	// "buy coffee anyway while you are there." It ends by itself, on the
+	// restock that clears the minimum.
+	ShoppingAlways ShoppingMode = "always"
+)
+
+// AllShoppingModes is the source of the tool schema's enum, the same way
+// AllUnits is.
+func AllShoppingModes() []ShoppingMode {
+	return []ShoppingMode{ShoppingAuto, ShoppingNever, ShoppingAlways}
+}
+
+func (m ShoppingMode) Valid() bool {
+	for _, known := range AllShoppingModes() {
+		if m == known {
+			return true
+		}
+	}
+	return false
+}
+
+// OrAuto resolves the zero value. A struct literal that never mentions
+// the mode means the default, not a decision, and the column's CHECK
+// never sees an empty string.
+func (m ShoppingMode) OrAuto() ShoppingMode {
+	if m == "" {
+		return ShoppingAuto
+	}
+	return m
+}
+
 const (
 	// PortionSeeded is the model's estimate, written down on first use.
 	PortionSeeded = "seeded"
@@ -64,6 +106,11 @@ type Item struct {
 	Threshold Amount
 
 	Category string
+
+	// Shopping is the person's standing answer about the shopping list.
+	// It changes nothing else: a 'never' item is still in the pantry,
+	// still counted, and keeps its minimum for when it comes back.
+	Shopping ShoppingMode
 
 	// Portions is the item's vocabulary; Aliases the other names the
 	// person calls it by.
@@ -118,5 +165,27 @@ func (i Item) Drifted() bool { return i.OnHand < 0 }
 // BelowThreshold reports that the item belongs on the shopping list. A
 // threshold of zero means "tell me when it runs out".
 func (i Item) BelowThreshold() bool { return i.OnHand <= i.Threshold }
+
+// OnShoppingList reports that the item belongs on the list now: the
+// level, unless the person has overruled it. The zero mode falls through
+// to the minimum, so an Item built without one behaves the way every
+// item did before this field existed.
+func (i Item) OnShoppingList() bool {
+	switch i.Shopping {
+	case ShoppingNever:
+		return false
+	case ShoppingAlways:
+		return true
+	default:
+		return i.BelowThreshold()
+	}
+}
+
+// Pinned reports a standing "buy it anyway": the one mode that puts an
+// item on the list without the level saying so.
+func (i Item) Pinned() bool { return i.Shopping == ShoppingAlways }
+
+// HeldBack reports that the person asked not to restock this for now.
+func (i Item) HeldBack() bool { return i.Shopping == ShoppingNever }
 
 func (i Item) Archived() bool { return !i.ArchivedAt.IsZero() }

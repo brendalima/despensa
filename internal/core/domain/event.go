@@ -120,6 +120,15 @@ type Receipt struct {
 	// reply and needs no scheduled job.
 	CrossedThreshold bool
 
+	// NoteCleared is set when creating this item removed a shopping note
+	// naming the same thing: the reminder became inventory, so the line
+	// that vanished from the list has to be explained.
+	NoteCleared bool
+
+	// PinCleared is set when this restock took a pinned item back to
+	// 'auto'. "Buy it anyway" is a one-time intent, so buying it ends it.
+	PinCleared bool
+
 	// Drifted is set when the running total is now below zero.
 	Drifted bool
 }

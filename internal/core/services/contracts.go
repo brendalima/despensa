@@ -30,10 +30,14 @@ type PantryService interface {
 	// Update touches only the fields the change sets.
 	Update(ctx context.Context, change domain.ItemChange) (domain.Item, error)
 
-	// ShoppingList is the low items plus the notes.
+	// ShoppingList is what to buy: the items the level or the person
+	// puts there, plus the notes.
 	ShoppingList(ctx context.Context) (domain.ShoppingList, error)
 	AddNote(ctx context.Context, text string) (domain.Note, error)
-	RemoveNote(ctx context.Context, id int64) error
+
+	// RemoveNote returns the note it deleted, so the answer can name
+	// the thing that was bought.
+	RemoveNote(ctx context.Context, id int64) (domain.Note, error)
 }
 
 // ChatService is what the bot needs around one incoming message: the

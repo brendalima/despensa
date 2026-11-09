@@ -81,6 +81,9 @@ func (stubPantry) ShoppingList(context.Context) (domain.ShoppingList, error) {
 func (stubPantry) AddNote(context.Context, string) (domain.Note, error) {
 	return domain.Note{}, nil
 }
+func (stubPantry) RemoveNote(context.Context, int64) (domain.Note, error) {
+	return domain.Note{}, nil
+}
 
 func TestReplyAsksTheWayThePlanSays(t *testing.T) {
 	s := newServer(t)
@@ -131,8 +134,8 @@ func TestReplyAsksTheWayThePlanSays(t *testing.T) {
 		t.Errorf("prefix_mismatch_behavior %v, want drop_block", binding["prefix_mismatch_behavior"])
 	}
 
-	if sent, ok := s.sent["tools"].([]any); !ok || len(sent) != 6 {
-		t.Errorf("sent %v tools, want 6", s.sent["tools"])
+	if sent, ok := s.sent["tools"].([]any); !ok || len(sent) != 7 {
+		t.Errorf("sent %v tools, want 7", s.sent["tools"])
 	}
 
 	if turn.Role != domain.TurnAssistant {

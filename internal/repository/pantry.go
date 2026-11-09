@@ -25,7 +25,7 @@ const (
 	pgUniqueViolation = "23505"
 	itemsNameKey      = "items_name_key"
 
-	itemColumns = `id, name, canonical_unit, on_hand_milli, threshold_milli, category, archived_at, created_at`
+	itemColumns = `id, name, canonical_unit, on_hand_milli, threshold_milli, category, shopping_mode, archived_at, created_at`
 )
 
 type Pantry struct {
@@ -148,15 +148,20 @@ func (r *Pantry) AddNote(ctx context.Context, text string) (domain.Note, error) 
 	return n, nil
 }
 
-func (r *Pantry) RemoveNote(ctx context.Context, id int64) error {
-	res, err := r.db.ExecContext(ctx, `DELETE FROM shopping_notes WHERE id = $1`, id)
+// RemoveNote returns the row it deleted, so the confirmation can name
+// the thing instead of saying that something was removed.
+func (r *Pantry) RemoveNote(ctx context.Context, id int64) (domain.Note, error) {
+	var n domain.Note
+	err := r.db.QueryRowContext(ctx,
+		`DELETE FROM shopping_notes WHERE id = $1 RETURNING id, text, created_at`, id,
+	).Scan(&n.ID, &n.Text, &n.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Note{}, domain.NewNotFoundError("shopping note not found")
+	}
 	if err != nil {
-		return fmt.Errorf("couldn't remove shopping note: %w", err)
+		return domain.Note{}, fmt.Errorf("couldn't remove shopping note: %w", err)
 	}
-	if n, err := res.RowsAffected(); err == nil && n == 0 {
-		return domain.NewNotFoundError("shopping note not found")
-	}
-	return nil
+	return n, nil
 }
 
 // pantryTx is the repository bound to one transaction.
@@ -214,9 +219,10 @@ func (t *pantryTx) LockByName(ctx context.Context, name string) (domain.Item, er
 
 func (t *pantryTx) CreateItem(ctx context.Context, item domain.Item) error {
 	_, err := t.tx.ExecContext(ctx,
-		`INSERT INTO items (id, name, canonical_unit, on_hand_milli, threshold_milli, category)
-		 VALUES ($1, $2, $3, $4, $5, $6)`,
-		item.ID, item.Name, string(item.Unit), int64(item.OnHand), int64(item.Threshold), item.Category)
+		`INSERT INTO items (id, name, canonical_unit, on_hand_milli, threshold_milli, category, shopping_mode)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		item.ID, item.Name, string(item.Unit), int64(item.OnHand), int64(item.Threshold), item.Category,
+		string(item.Shopping.OrAuto()))
 	if err != nil {
 		return translateWriteError(err, item.Name, "couldn't create item")
 	}
@@ -232,9 +238,11 @@ func (t *pantryTx) CreateItem(ctx context.Context, item domain.Item) error {
 func (t *pantryTx) UpdateItem(ctx context.Context, item domain.Item) error {
 	res, err := t.tx.ExecContext(ctx,
 		`UPDATE items SET name = $2, canonical_unit = $3, threshold_milli = $4, category = $5,
-		        archived_at = NULLIF($6, '1970-01-01 00:00:00+00'::timestamptz)
+		        shopping_mode = $6,
+		        archived_at = NULLIF($7, '1970-01-01 00:00:00+00'::timestamptz)
 		 WHERE id = $1`,
-		item.ID, item.Name, string(item.Unit), int64(item.Threshold), item.Category, archivedParam(item.ArchivedAt))
+		item.ID, item.Name, string(item.Unit), int64(item.Threshold), item.Category,
+		string(item.Shopping.OrAuto()), archivedParam(item.ArchivedAt))
 	if err != nil {
 		return translateWriteError(err, item.Name, "couldn't update item")
 	}
@@ -254,6 +262,35 @@ func (t *pantryTx) SetOnHand(ctx context.Context, itemID string, onHand domain.A
 		return domain.NewNotFoundError("item not found")
 	}
 	return nil
+}
+
+// SetShopping writes the one field the person decides rather than the
+// ledger, so a pin clearing itself does not have to rewrite the row.
+func (t *pantryTx) SetShopping(ctx context.Context, itemID string, mode domain.ShoppingMode) error {
+	res, err := t.tx.ExecContext(ctx,
+		`UPDATE items SET shopping_mode = $2 WHERE id = $1`, itemID, string(mode.OrAuto()))
+	if err != nil {
+		return fmt.Errorf("couldn't set shopping mode: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return domain.NewNotFoundError("item not found")
+	}
+	return nil
+}
+
+// DeleteNotesNamed removes the reminders that name a thing which has
+// just become inventory. Nothing matching is the normal case, so it is
+// not an error.
+func (t *pantryTx) DeleteNotesNamed(ctx context.Context, name string) (int64, error) {
+	res, err := t.tx.ExecContext(ctx,
+		`DELETE FROM shopping_notes WHERE lower(trim(text)) = lower(trim($1))`, name)
+	if err != nil {
+		return 0, fmt.Errorf("couldn't remove shopping note: %w", err)
+	}
+	// A driver that cannot count the rows is not a reason to fail the
+	// write: the delete happened, and the count only decides a sentence.
+	n, _ := res.RowsAffected()
+	return n, nil
 }
 
 // UpsertPortion keeps a size the person gave over the model's estimate.
@@ -344,7 +381,7 @@ func readItems(ctx context.Context, q querier, tail string, args ...any) ([]doma
 	for rows.Next() {
 		var item domain.Item
 		if err := rows.Scan(&item.ID, &item.Name, &item.Unit, &item.OnHand, &item.Threshold,
-			&item.Category, (*nullTime)(&item.ArchivedAt), &item.CreatedAt); err != nil {
+			&item.Category, &item.Shopping, (*nullTime)(&item.ArchivedAt), &item.CreatedAt); err != nil {
 			return nil, fmt.Errorf("couldn't read items: %w", err)
 		}
 		item.Portions = []domain.Portion{}

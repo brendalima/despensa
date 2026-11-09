@@ -95,7 +95,7 @@ func TestRecordEventsSendsTheWholeBatchInOneCall(t *testing.T) {
 }
 
 // The source is the tool set's, not the package's: phase C writes
-// whatsapp on the same six tools, and a ledger that calls every line mcp
+// whatsapp on the same seven tools, and a ledger that calls every line mcp
 // cannot answer where a wrong number came from.
 func TestRecordEventsWritesTheSourceItWasBuiltWith(t *testing.T) {
 	pantry := &fakePantry{items: []domain.Item{rice()}}
@@ -279,8 +279,84 @@ func TestUpdateItemSendsOnlyWhatChanged(t *testing.T) {
 		t.Errorf("portions are %v, want taça = 200 g", change.Portions)
 	}
 	// Not mentioned must not mean emptied.
-	if change.Name != nil || change.Category != nil || change.Archive != nil || change.Aliases != nil {
+	if change.Name != nil || change.Category != nil || change.Archive != nil || change.Aliases != nil ||
+		change.Shopping != nil {
 		t.Errorf("fields nobody touched were sent as changes: %+v", change)
+	}
+}
+
+// The three modes are the person's decision about the list, and they
+// reach the service as the domain's own type: the schema's enum comes
+// from there, so a value the schema allows is one the service knows.
+func TestUpdateItemCarriesTheShoppingMode(t *testing.T) {
+	for _, mode := range domain.AllShoppingModes() {
+		t.Run(string(mode), func(t *testing.T) {
+			pantry := &fakePantry{items: []domain.Item{rice()}}
+			set := newSet(t, pantry)
+
+			call(t, set, "update_item", `{"item_id":"`+riceID+`","shopping_mode":"`+string(mode)+`"}`)
+
+			change := pantry.changes[0]
+			if change.Shopping == nil || *change.Shopping != mode {
+				t.Fatalf("shopping_mode reached the service as %v, want %q", change.Shopping, mode)
+			}
+			if change.Threshold != nil || change.Name != nil {
+				t.Errorf("the mode dragged other fields along: %+v", change)
+			}
+		})
+	}
+}
+
+// A held-back item reads low: true with the mode beside it. The level
+// and the decision are two facts, and keeping them separate is what
+// lets the model answer "tira o arroz da lista" correctly.
+func TestInventoryShowsTheModeBesideTheLevel(t *testing.T) {
+	heldBack := rice()
+	heldBack.OnHand = 500 * domain.Thousand
+	heldBack.Shopping = domain.ShoppingNever
+
+	plain := rice()
+	plain.ID = "22222222-2222-2222-2222-222222222222"
+
+	set := newSet(t, &fakePantry{items: []domain.Item{heldBack, plain}})
+	result := call(t, set, "list_inventory", `{}`)
+
+	items, ok := result["items"].([]any)
+	if !ok || len(items) != 2 {
+		t.Fatalf("items = %#v", result["items"])
+	}
+
+	first, _ := items[0].(map[string]any)
+	if first["shopping_mode"] != "never" {
+		t.Errorf("shopping_mode = %v, want never", first["shopping_mode"])
+	}
+	if first["low"] != true {
+		t.Errorf("low = %v, want true: the mode must not move the level", first["low"])
+	}
+
+	// The default is not a decision, so it is not reported.
+	second, _ := items[1].(map[string]any)
+	if _, ok := second["shopping_mode"]; ok {
+		t.Errorf("an auto item reported a mode: %v", second["shopping_mode"])
+	}
+}
+
+// Being bought is a note's end, and the answer names what went: a line
+// disappearing with an "ok" is what makes a person check by hand.
+func TestRemoveShoppingNote(t *testing.T) {
+	pantry := &fakePantry{notes: []domain.Note{{ID: 7, Text: "fermento"}}}
+	set := newSet(t, pantry)
+
+	result := call(t, set, "remove_shopping_note", `{"note_id":7}`)
+
+	if len(pantry.removed) != 1 || pantry.removed[0] != 7 {
+		t.Fatalf("removed = %v, want the one id", pantry.removed)
+	}
+	if result["removed"] != "fermento" {
+		t.Errorf("removed = %v, want the note's text", result["removed"])
+	}
+	if text, _ := result["text"].(string); !strings.Contains(text, "fermento") {
+		t.Errorf("text = %q, want it to name the note", text)
 	}
 }
 

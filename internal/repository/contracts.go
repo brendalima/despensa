@@ -37,7 +37,10 @@ type PantryRepository interface {
 	// Notes are the shopping list's free-text entries.
 	Notes(ctx context.Context) ([]domain.Note, error)
 	AddNote(ctx context.Context, text string) (domain.Note, error)
-	RemoveNote(ctx context.Context, id int64) error
+
+	// RemoveNote returns the row it deleted: a note is removed by
+	// saying the thing was bought, and the answer names it.
+	RemoveNote(ctx context.Context, id int64) (domain.Note, error)
 }
 
 // PantryTx is the repository inside a transaction. The rows it reads are
@@ -52,6 +55,16 @@ type PantryTx interface {
 	CreateItem(ctx context.Context, item domain.Item) error
 	UpdateItem(ctx context.Context, item domain.Item) error
 	SetOnHand(ctx context.Context, itemID string, onHand domain.Amount) error
+
+	// SetShopping writes the shopping mode alone, for the one case the
+	// service changes it without the person asking: a pin ending on the
+	// restock that clears the minimum.
+	SetShopping(ctx context.Context, itemID string, mode domain.ShoppingMode) error
+
+	// DeleteNotesNamed removes the reminders naming a thing that has
+	// just become an item, inside the same transaction that created it.
+	// It returns how many went, and no match is not an error.
+	DeleteNotesNamed(ctx context.Context, name string) (int64, error)
 
 	// UpsertPortion never lets a 'seeded' estimate replace a
 	// 'corrected' size: the person's number outranks the model's.

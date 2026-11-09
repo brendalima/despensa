@@ -215,8 +215,8 @@ func TestTheModelGetsTheToolsAndThePrompt(t *testing.T) {
 	h.bot.Handle(context.Background(), text("o que tem na despensa?"))
 
 	req := h.model.requests[0]
-	if len(req.Tools) != 6 {
-		t.Errorf("the model got %d tools, want 6", len(req.Tools))
+	if len(req.Tools) != 7 {
+		t.Errorf("the model got %d tools, want 7", len(req.Tools))
 	}
 	if !strings.Contains(req.System, "list_inventory") {
 		t.Error("the prompt does not tell the model to read the pantry first")
